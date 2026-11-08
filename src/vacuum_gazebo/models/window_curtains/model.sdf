@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<sdf version='1.4'>
+  <model name='window_curtains'>
+    <link name="link">
+      <visual name="visual">
+        <geometry>
+          <box>
+            <size>0.02 1.5676 2</size>
+          </box>
+        </geometry>
+        <material>
+          <pbr>
+            <metal>
+              <emissive_map>textures/window_curtains.png</emissive_map>
+            <metalness>0.0</metalness><roughness>0.95</roughness>
+            </metal>
+          </pbr>
+          <ambient>1 1 1 1</ambient>
+          <diffuse>1 1 1 1</diffuse>
+          <specular>1 1 1 1</specular>
+          <emissive>0.4 0.4 0.4 1</emissive>
+        </material>
+      </visual>
+    </link>
+    <static>1</static>
+    <allow_auto_disable>1</allow_auto_disable>
+  </model>
+</sdf>

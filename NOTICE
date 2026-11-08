@@ -1,0 +1,20 @@
+vacuum_sim
+==========
+
+This project contains material derived from the following Apache-2.0 licensed
+open-source projects by Maker's Pet / KAIA.AI, with modifications (renamed
+packages and robot model, removed the kaiaai dependency, new launch files,
+trimmed worlds/models):
+
+  - makerspet/oomwoo-one          robot description (urdf/, gz bridge, EKF, RViz,
+                                   Nav2 parameters)
+  - makerspet/oomwoo_gazebo       living_room world, models, map, launch file
+  - makerspet/oomwoo-ros2-tools   oomwoo_bringup navigation launch file
+
+  Copyright 2023-2025 KAIA.AI
+  https://github.com/makerspet/oomwoo
+
+Individual world models carry their own licenses and attributions; see
+makerspet/oomwoo_gazebo README for the model credits table.
+
+Licensed under the Apache License, Version 2.0. See LICENSE.

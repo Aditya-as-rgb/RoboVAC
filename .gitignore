@@ -1,0 +1,18 @@
+build/
+install/
+log/
+*.pyc
+__pycache__/
+# saved maps / rosbags you generate while testing
+maps_out/
+*.db3
+*.mcap
+
+# editor / OS noise
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# one-off patcher that already applied its edits to the launch files
+qt_fix.py

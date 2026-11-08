@@ -1,0 +1,50 @@
+# Gamepad teleop parameters for an Xbox-compatible pad.
+#
+# Verified with an EvoFox One S over Bluetooth: the kernel's xpad driver
+# exposes it as /dev/input/js0 ("Xbox Wireless Controller") and SDL/joy_node
+# opens it as "Xbox One S Controller".
+#
+# Chain: joy_node -> /joy -> teleop_twist_joy -> /cmd_vel -> gz_bridge ->
+# gz-sim DiffDrive plugin (vacuum_description/config/gz_bridge.yaml).
+#
+# Axis layout (SDL, joy 3.3.0, as measured on this pad): axes 0 LX, 1 LY,
+# 2 RX, 3 RY, 4/5 triggers (+1 released, -1 pressed), 6/7 D-pad.
+# Buttons measured: 0 A, ... , 6 LB, 7 RB (NOT the usual 4/5 — verify with
+# /joy before changing this).
+#
+# IMPORTANT: this clone pad does not follow the standard SDL sign convention.
+# Measured with `ros2 topic echo /joy`:
+#   left stick up    -> axis 1 = +1.0    (normally -1)
+#   left stick down  -> axis 1 = -1.0
+#   left stick left  -> axis 0 = +1.0    (normally -1)
+#   left stick right -> axis 0 = -1.0
+# So "up" and "left" are POSITIVE here and the scales below stay positive.
+# If the robot drives backwards/turns the wrong way on another pad, flip these
+# signs.
+#
+# Deadman: hold LB (button 6) to enable. Add RB (button 7) for turbo.
+
+joy_node:
+  ros__parameters:
+    device_id: 0          # SDL index, see `ros2 run joy joy_enumerate_devices`
+    deadzone: 0.08
+    autorepeat_rate: 20.0
+
+teleop_twist_joy_node:
+  ros__parameters:
+    axis_linear:
+      x: 1                # left stick vertical
+    axis_angular:
+      yaw: 0              # left stick horizontal
+    scale_linear:
+      x: 0.30             # m/s
+    scale_linear_turbo:
+      x: 0.50
+    scale_angular:
+      yaw: 1.20           # rad/s
+    scale_angular_turbo:
+      yaw: 2.50
+    enable_button: 6      # LB, deadman (measured; not 4 on this pad)
+    enable_turbo_button: 7  # RB
+    require_enable_button: true
+    publish_stamped_twist: false
