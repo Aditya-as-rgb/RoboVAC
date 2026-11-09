@@ -8,6 +8,15 @@ maps_out/
 *.db3
 *.mcap
 
+# test / build caches
+.pytest_cache/
+*.egg-info/
+
+# generated coverage previews (the one for the README lives in docs/)
+/plan*.png
+/coverage_plan.png
+/src/vacuum_coverage/coverage_plan.png
+
 # editor / OS noise
 .vscode/
 .idea/

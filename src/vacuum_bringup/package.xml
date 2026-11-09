@@ -17,6 +17,8 @@
   <exec_depend>slam_toolbox</exec_depend>
   <exec_depend>rviz2</exec_depend>
   <exec_depend>teleop_twist_keyboard</exec_depend>
+  <exec_depend>vacuum_teleop</exec_depend>
+  <exec_depend>vacuum_coverage</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

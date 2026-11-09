@@ -107,7 +107,7 @@ controller_server:
     failure_tolerance: 0.3
     progress_checker_plugins: ["progress_checker"]
     goal_checker_plugins: ["goal_checker"]
-    controller_plugins: ["FollowPath"]
+    controller_plugins: ["FollowPath", "CoveragePath"]
     progress_checker:
       plugin: "nav2_controller::SimpleProgressChecker"
       required_movement_radius: 0.1
@@ -149,6 +149,38 @@ controller_server:
       allow_reversing: false
       max_angular_accel: 3.2
       max_robot_pose_search_dist: 10.0
+    # Used by vacuum_coverage for wall loops and lane pieces (FollowPath goals with
+    # controller_id: CoveragePath). Same controller as above but a shorter carrot,
+    # because a long lookahead cuts corners and the wall pass hugs furniture.
+    # Keep lookahead / speed in step with pursuit_* in vacuum_coverage/config/coverage.yaml:
+    # the planner checks its wall margin against an offline model of exactly these values.
+    CoveragePath:
+      plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
+      desired_linear_vel: 0.25
+      lookahead_dist: 0.25
+      min_lookahead_dist: 0.2
+      max_lookahead_dist: 0.4
+      lookahead_time: 1.5
+      use_velocity_scaled_lookahead_dist: false
+      rotate_to_heading_angular_vel: 0.8
+      transform_tolerance: 0.2
+      min_approach_linear_velocity: 0.05
+      approach_velocity_scaling_dist: 0.4
+      use_collision_detection: true
+      max_allowed_time_to_collision_up_to_carrot: 1.0
+      use_regulated_linear_velocity_scaling: true
+      use_cost_regulated_linear_velocity_scaling: false
+      regulated_linear_scaling_min_radius: 0.5
+      regulated_linear_scaling_min_speed: 0.1
+      use_rotate_to_heading: true
+      rotate_to_heading_min_angle: 0.785
+      allow_reversing: false
+      max_angular_accel: 3.2
+      max_robot_pose_search_dist: 10.0
+    # NOTE: keep exactly ONE goal checker. Nav2's own NavigateToPose behaviour tree
+    # sends FollowPath goals with an empty goal_checker_id, which the controller
+    # server only accepts when a single checker exists. vacuum_coverage therefore
+    # uses "goal_checker" too.
     enable_stamped_cmd_vel: false
 
 local_costmap:

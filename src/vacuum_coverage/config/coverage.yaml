@@ -1,0 +1,31 @@
+# Parameters for the coverage mission and the coverage meter.
+coverage_mission:
+  ros__parameters:
+    # --- geometry (metres) ---
+    robot_radius: 0.1745     # circle that contains the robot body
+    wall_margin: 0.06        # starting gap to walls; auto_margin raises it until the simulated path is safe
+    clean_radius: 0.22       # how far from the robot centre floor counts as cleaned
+    lane_spacing: 0.30       # distance between sweep lanes (keep <= 2 * clean_radius)
+    lane_axis: auto          # auto | x | y
+    wall_pass: true          # first go round the walls and furniture
+    lanes: true              # then sweep the open floor
+    # --- self check ---
+    auto_margin: true
+    safety: 0.02             # required clearance beyond robot_radius in the offline simulation
+    pursuit_lookahead: 0.25  # must match CoveragePath in navigation.yaml
+    pursuit_speed: 0.25
+    # --- Nav2 ---
+    controller_id: CoveragePath
+    goal_checker_id: goal_checker
+    robot_frame: base_footprint
+    max_retries: 2
+    wait_nav2: true
+
+coverage_meter:
+  ros__parameters:
+    wall_margin: 0.11        # same reachability the planner settles on for the living room
+    clean_radius: 0.22
+    robot_frame: base_footprint
+    rate: 10.0
+    publish_period: 1.0
+    covered_value: 10
