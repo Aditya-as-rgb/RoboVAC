@@ -9,6 +9,7 @@
 # Starts gz-sim with a world, bridges gz <-> ROS 2, publishes robot_description
 # and spawns the robot.
 
+import importlib.util
 import os
 
 import xacro
@@ -35,6 +36,38 @@ def _arg(context: LaunchContext, name: str) -> str:
     return context.perform_substitution(LaunchConfiguration(name))
 
 
+def _add_dirt(context: LaunchContext, gazebo_share: str, world_path: str, count: int) -> str:
+    """Write a copy of the world with ``count`` dirt patches added; returns its path.
+
+    The patches go only where the robot can clean, so the generator needs the map of
+    this world: by default maps/<world name>.yaml in this package, or dirt_map:=...
+    """
+    spec = importlib.util.spec_from_file_location(
+        'dirt_world', os.path.join(gazebo_share, 'scripts', 'dirt_world.py'))
+    dirt_world = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(dirt_world)
+
+    map_yaml = _arg(context, 'dirt_map')
+    if not map_yaml:
+        stem = os.path.splitext(_arg(context, 'world'))[0]
+        map_yaml = os.path.join(gazebo_share, 'maps', stem + '.yaml')
+    if not os.path.exists(map_yaml):
+        raise RuntimeError(
+            'dirt:=%d needs the map of this world to place dirt on reachable floor, '
+            'but %s does not exist. Save one with save_map.sh, then pass '
+            'dirt_map:=/path/to/map.yaml' % (count, map_yaml))
+    result = dirt_world.make_world(
+        world_path, map_yaml, count, seed=int(_arg(context, 'dirt_seed')),
+        spawn=(float(_arg(context, 'x_pose')), float(_arg(context, 'y_pose'))),
+        out_dir=_arg(context, 'dirt_dir'), scale=float(_arg(context, 'dirt_scale')),
+        stubborn_fraction=float(_arg(context, 'dirt_stubborn')),
+        randomize=_arg(context, 'dirt_randomize') == 'true')
+    print('Dirt       : {} patches, seed {} (map {})'.format(
+        len(result['patches']), _arg(context, 'dirt_seed'), map_yaml))
+    print('Dirt layout: {}'.format(result['layout']))
+    return result['world']
+
+
 def make_nodes(context: LaunchContext):
     description_pkg = _arg(context, 'description_pkg')
     use_sim_time = _arg(context, 'use_sim_time').lower() == 'true'
@@ -48,6 +81,9 @@ def make_nodes(context: LaunchContext):
     urdf_path = os.path.join(desc_share, 'urdf', 'robot.urdf.xacro')
     bridge_cfg = os.path.join(desc_share, 'config', 'gz_bridge.yaml')
     world_path = os.path.join(gazebo_share, 'worlds', _arg(context, 'world'))
+    dirt_count = int(_arg(context, 'dirt'))
+    if dirt_count > 0:
+        world_path = _add_dirt(context, gazebo_share, world_path, dirt_count)
 
     mappings = {'odom_source': _arg(context, 'odom_source')}
     for name in XACRO_SWITCHES:
@@ -72,9 +108,11 @@ def make_nodes(context: LaunchContext):
     qt_platform = _arg(context, 'qt_platform')
     if qt_platform:
         actions.append(SetEnvironmentVariable('QT_QPA_PLATFORM', qt_platform))
-    # Mesa software rendering: always when headless; optional for the GUI
-    # (software_gl:=true) if the Gazebo window dies with an OGRE/EGL error.
-    if headless or software_gl:
+    # Mesa software rendering: under headless only when the machine has no GPU
+    # (no /dev/dri) — with one, hardware EGL renders offscreen fine and forcing
+    # llvmpipe segfaults Mesa (EGL driCreateNewScreen3, exit 139). software_gl
+    # forces it either way (GUI fallback if the window dies with OGRE/EGL error).
+    if software_gl or (headless and not os.path.exists('/dev/dri')):
         actions += [
             SetEnvironmentVariable('LIBGL_ALWAYS_SOFTWARE', '1'),
             SetEnvironmentVariable('GALLIUM_DRIVER', 'llvmpipe'),
@@ -129,6 +167,32 @@ def generate_launch_description():
             'world', default_value='living_room.world',
             description='World file name in vacuum_gazebo/worlds'),
         DeclareLaunchArgument(
+            'dirt', default_value='0',
+            description='Number of dirt patches to scatter on the floor (0 = none). '
+                        'Visual only, no collision; placed on floor the robot can reach.'),
+        DeclareLaunchArgument(
+            'dirt_seed', default_value='1',
+            description='Random seed: the same seed gives the same dirt layout'),
+        DeclareLaunchArgument(
+            'dirt_map', default_value='',
+            description='Map yaml of the world, used to find reachable floor '
+                        '(default: maps/<world name>.yaml in vacuum_gazebo)'),
+        DeclareLaunchArgument(
+            'dirt_dir', default_value='~/vacuum_runs/dirt',
+            description='Where the dirt world and its ground-truth layout (.json) are written'),
+        DeclareLaunchArgument(
+            'dirt_scale', default_value='1.0',
+            description='Size multiplier for every dirt patch (2.0 = twice as big; makes '
+                        'them easier for a camera to see)'),
+        DeclareLaunchArgument(
+            'dirt_stubborn', default_value='0.15',
+            description='Share of non-spill patches that need much more scrubbing to come off '
+                        '(spills always do)'),
+        DeclareLaunchArgument(
+            'dirt_randomize', default_value='false', choices=['true', 'false'],
+            description='Random floor colour and light level for this dirt_seed (dataset '
+                        'collection: stops a vision model learning one floor)'),
+        DeclareLaunchArgument(
             'qt_platform', default_value='xcb',
             description='Value for QT_QPA_PLATFORM (xcb = run the Gazebo GUI '
                         'through XWayland). Empty string leaves it unset.'),
@@ -138,7 +202,7 @@ def generate_launch_description():
                               description='Spawn y (m)'),
         switch('use_sim_time', 'true', 'Use the Gazebo clock'),
         switch('headless', 'false',
-               'Server only, offscreen rendering, software GL (no GUI)'),
+               'Server only, offscreen rendering (no GUI)'),
         switch('software_gl', 'false',
                'Force Mesa software GL for the GUI (slow; use if the window '
                'dies with an OGRE/EGL error)'),

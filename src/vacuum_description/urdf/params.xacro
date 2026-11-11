@@ -172,6 +172,7 @@
   <xacro:property name="camera_near" value="0.02"/>                <!-- m -->
   <xacro:property name="camera_far" value="10.0"/>                 <!-- m -->
   <xacro:property name="camera_update_rate" value="15"/>           <!-- Hz -->
+  <xacro:property name="camera_noise_stddev" value="0.007"/>       <!-- gaussian pixel noise (0..1 scale), a cheap sensor -->
   <xacro:property name="camera_x" value="${base_diameter/2}"/>     <!-- front surface (window) -->
   <!-- lens centre 8 mm under the body top: ~71 mm above the floor -->
   <xacro:property name="camera_z" value="${lower_cylinder_height - 0.008}"/>

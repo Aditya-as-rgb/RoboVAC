@@ -20,6 +20,16 @@ coverage_mission:
     robot_frame: base_footprint
     max_retries: 2
     wait_nav2: true
+    # --- clean-up pass: after the main run, drive to the spots that are still dirty ---
+    reclean: true
+    reclean_passes: 2        # at most this many extra passes (stops early when nothing is left)
+    reclean_slack: 0.08      # spots are picked for clean_radius - slack (Nav2 stops within its goal tolerance)
+    reclean_min_area: 0.015  # m^2, dirty patches smaller than this are ignored
+    # --- run report, written to <report_dir>/run_YYYYmmdd_HHMMSS/ when a mission ends ---
+    report: true
+    report_dir: ~/vacuum_runs
+    report_period: 1.0       # seconds between rows of coverage.csv
+    reset_meter_on_start: true   # zero the RViz "Cleaned: xx %" at the start of every run
 
 coverage_meter:
   ros__parameters:

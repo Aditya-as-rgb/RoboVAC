@@ -10,7 +10,9 @@ lane pieces are sent as FollowPath goals; the hops between pieces use NavigateTo
 """
 
 from dataclasses import fields, replace
+import datetime
 import math
+import os
 import threading
 import time
 
@@ -30,7 +32,7 @@ from std_srvs.srv import Trigger
 import tf2_ros
 from visualization_msgs.msg import Marker, MarkerArray
 
-from . import core, mission, sim, validate
+from . import core, mission, reclean, report, sim, validate
 
 
 def yaw_to_quat(yaw):
@@ -59,6 +61,16 @@ class CoverageMission(Node):
         self.declare_parameter('autostart_delay', 5.0)
         self.declare_parameter('max_retries', 2)
         self.declare_parameter('wait_nav2', True)
+        # clean-up pass: after the main run, drive to the spots that are still dirty
+        self.declare_parameter('reclean', True)
+        self.declare_parameter('reclean_passes', 2)
+        self.declare_parameter('reclean_slack', 0.08)       # m, Nav2 stops within its goal tolerance
+        self.declare_parameter('reclean_min_area', 0.015)    # m^2, ignore smaller dirty patches
+        # run report (CSV + summary + PNG) written when a mission ends
+        self.declare_parameter('report', True)
+        self.declare_parameter('report_dir', '~/vacuum_runs')
+        self.declare_parameter('report_period', 1.0)        # s between coverage.csv rows
+        self.declare_parameter('reset_meter_on_start', True)
 
         self.map_frame = self.get_parameter('map_frame').value
         self.robot_frame = self.get_parameter('robot_frame').value
@@ -69,6 +81,15 @@ class CoverageMission(Node):
         self.thread = None
         self.lock = threading.Lock()
         self._state_clients = {}
+        # state of the running mission (the tracker is stamped from a timer, so guard it)
+        self.run_grid = None
+        self.tracker = None
+        self.log = None
+        self.sampling = False
+        self.track_lock = threading.Lock()
+        self._last_snapshot = 0.0
+        self._pass_pieces = {}
+        self._cleanup_info = []
 
         latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                              durability=DurabilityPolicy.TRANSIENT_LOCAL)
@@ -84,6 +105,8 @@ class CoverageMission(Node):
         self.create_service(Trigger, '~/plan', self._srv_plan, callback_group=self.cb)
         self.create_service(Trigger, '~/start', self._srv_start, callback_group=self.cb)
         self.create_service(Trigger, '~/stop', self._srv_stop, callback_group=self.cb)
+        self.meter_reset = self.create_client(Trigger, '/coverage_meter/reset', callback_group=self.cb)
+        self.create_timer(0.1, self._sample_tick, callback_group=self.cb)
 
         self._say('ready: waiting for /map')
         if self.get_parameter('autostart').value:
@@ -160,6 +183,7 @@ class CoverageMission(Node):
         for w in plan.warnings:
             self.get_logger().warn(w)
         self.plan = plan
+        self.run_grid = grid
         self._publish_markers(plan)
         s = plan.stats()
         self._say('plan ready: %s' % ', '.join('%s=%s' % kv for kv in s.items()))
@@ -266,16 +290,114 @@ class CoverageMission(Node):
             if not plan.pieces:
                 self._say('nothing to clean')
                 return
+            self._begin_run(plan)
+            do_reclean = bool(self.get_parameter('reclean').value)
             self.runner = mission.MissionRunner(
                 plan, self._navigate, self._follow, self._robot_pose,
                 log=lambda m: self.get_logger().info(m), status=self._say,
-                max_retries=int(self.get_parameter('max_retries').value))
-            self.runner.run()
+                max_retries=int(self.get_parameter('max_retries').value),
+                reclean=self._reclean_plan if do_reclean else None,
+                reclean_passes=int(self.get_parameter('reclean_passes').value),
+                pass_done=self._pass_done, clock=self._now)
+            result = self.runner.run()
+            self._finish_run(plan, result)
         except Exception as exc:  # noqa: BLE001 - report instead of dying silently
             self.get_logger().error('mission failed: %s' % exc)
             self._say('mission failed: %s' % exc)
         finally:
+            self.sampling = False
             self.runner = None
+
+    # ----------------------------------------- run log, clean-up pass, report --
+
+    def _now(self):
+        return self.get_clock().now().nanoseconds * 1e-9
+
+    def _begin_run(self, plan):
+        """Fresh coverage tracker and run log; also zero the RViz meter so both start at 0 %."""
+        if self.get_parameter('reset_meter_on_start').value and \
+                self.meter_reset.wait_for_service(timeout_sec=1.0):
+            ev = threading.Event()
+            fut = self.meter_reset.call_async(Trigger.Request())
+            fut.add_done_callback(lambda _f: ev.set())
+            ev.wait(2.0)
+        with self.track_lock:
+            self.tracker = core.CoverageTracker(self.run_grid, plan.masks.coverable,
+                                                plan.params.clean_radius)
+            self.log = report.RunLog(self._now())
+            self._last_snapshot = -1e9
+            self._pass_pieces = {0: list(plan.pieces)}
+            self._cleanup_info = []
+            self.started_at = datetime.datetime.now().isoformat(timespec='seconds')
+        self.sampling = True
+
+    def _sample_tick(self):
+        """10 Hz: stamp the cleaned area, keep the trail, and log one coverage row per period."""
+        if not self.sampling:
+            return
+        pose = self._robot_pose()
+        if pose is None:
+            return
+        with self.track_lock:
+            if self.tracker is None or self.log is None:
+                return
+            self.tracker.stamp_xy(pose[0], pose[1])
+            self.log.add_position(pose[0], pose[1])
+            now = self._now()
+            if now - self._last_snapshot >= float(self.get_parameter('report_period').value):
+                self._last_snapshot = now
+                self.log.snapshot(now, self.tracker.percent(),
+                                  report.percent_free(self.tracker, self.run_grid))
+
+    def _pass_done(self, pass_no):
+        with self.track_lock:
+            if self.log is None or self.tracker is None:
+                return
+            now = self._now()
+            pct = self.tracker.percent()
+            pct_free = report.percent_free(self.tracker, self.run_grid)
+            self.log.snapshot(now, pct, pct_free)
+            self.log.end_pass(pass_no, now, pct, pct_free)
+        self._say('%s done: %.1f %% of the reachable floor cleaned'
+                  % ('main pass' if pass_no == 0 else 'clean-up pass %d' % pass_no, pct))
+
+    def _reclean_plan(self, pass_no):
+        """Spots that still need cleaning, given what the tracker has marked so far."""
+        pose = self._robot_pose()
+        masks = self.plan.masks
+        start = (pose[0], pose[1]) if pose is not None else self.run_grid.cell_to_world(*masks.start_cell)
+        with self.track_lock:
+            covered = self.tracker.covered.copy()
+        extra = reclean.plan_reclean(
+            self.run_grid, masks, self.plan.params, covered, start,
+            slack=float(self.get_parameter('reclean_slack').value),
+            min_area=float(self.get_parameter('reclean_min_area').value))
+        self._cleanup_info.append({'pass': pass_no, 'spots': len(extra.pieces),
+                                   'dirty_area_m2': round(extra.missed_m2, 2),
+                                   'left_after_spots_m2': round(extra.left_m2, 2)})
+        if extra.pieces:
+            self._pass_pieces[pass_no] = list(extra.pieces)
+            self._say('clean-up pass %d: %d spot(s) for %.2f m2 of dirty floor'
+                      % (pass_no, len(extra.pieces), extra.missed_m2))
+        return extra
+
+    def _finish_run(self, plan, result):
+        self.sampling = False
+        if not self.get_parameter('report').value:
+            return
+        try:
+            stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+            out = os.path.join(os.path.expanduser(self.get_parameter('report_dir').value),
+                               'run_' + stamp)
+            with self.track_lock:
+                self.log.snapshot(self._now(), self.tracker.percent(),
+                                  report.percent_free(self.tracker, self.run_grid))
+                report.write_report(out, self.log, result, self._pass_pieces, self.tracker,
+                                    self.run_grid, plan.params, plan.stats(), self._cleanup_info,
+                                    self.started_at)
+            self._say('run report saved in %s' % out)
+        except Exception as exc:  # noqa: BLE001 - a failed report must not look like a failed run
+            self.get_logger().error('could not write the run report: %s' % exc)
 
     def _srv_plan(self, _req, resp):
         try:
