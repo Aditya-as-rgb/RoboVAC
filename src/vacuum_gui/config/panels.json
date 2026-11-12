@@ -1,0 +1,28 @@
+{
+  "_comment": "Default panel state, for reference. The live copy is written to ~/.config/vacuum_gui/settings.json; nothing here is ever rewritten by the app.",
+  "layers": {
+    "scan": true,
+    "plan_global": true,
+    "plan_local": false,
+    "coverage_plan": true,
+    "cleaned": true,
+    "dirt_detected": true,
+    "dirt_truth": false,
+    "particles": false,
+    "costmaps": false,
+    "trail": true
+  },
+  "rates": {
+    "camera_fps": 10,
+    "map_fps": 2,
+    "scan_fps": 5
+  },
+  "rosbag_topics": [
+    "/scan",
+    "/odom",
+    "/tf",
+    "/tf_static",
+    "/camera/image",
+    "/dirt/detections"
+  ]
+}

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=RoboVAC Control Panel
+GenericName=Robot vacuum simulation panel
+Comment=Start the RoboVAC simulation, watch map, camera and health, run missions
+Exec=vacuum_gui
+Terminal=false
+Categories=Robotics;Science;Utility;
+Icon=vacuum_gui
+StartupNotify=true
+StartupWMClass=vacuum_gui

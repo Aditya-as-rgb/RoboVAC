@@ -22,6 +22,7 @@ unchanged and later replace it with our own design.
 | `vacuum_bringup` | `launch/vacuum.launch.py` (everything in one command), `launch/navigation.launch.py` (SLAM or AMCL + Nav2 + RViz), `config/navigation.yaml`, `config/explore_lite.yaml` (for later) |
 | `vacuum_coverage` | wall-pass + lane-sweep coverage mission on top of Nav2 (`coverage_mission`), cleaned-area overlay and percentage (`coverage_meter`), re-clean pass, run report, offline planner/preview (`coverage_preview`), unit tests |
 | `vacuum_teleop` | `launch/teleop_joy.launch.py` + `config/teleop_joy.yaml` — gamepad teleop (`joy` + `teleop_twist_joy` -> `/cmd_vel`) |
+| `vacuum_gui` | PySide6 control panel: launch manager, map/camera/health views drawn from ROS topics, mission and teleop controls, dataset and experiment tooling (see [Control panel](#control-panel-vacuum_gui)) |
 | `tools/dirt_dataset` | `collect_dataset.sh` (batch of labelled runs), `package_dataset.py` (train/val/test split + zip), `train_dirt_yolo.ipynb` (Colab training) |
 | `models/dirt_detector` | trained dirt detector (`.pt` and `.onnx`) and its README |
 
@@ -348,6 +349,138 @@ world must load `gz-sim-contact-system`.
   `/usr/bin/python3` on `PATH`. Launch with `PATH=/usr/bin:/bin:$PATH ros2 launch ...`, or deactivate
   the venv first.
 - **`source install/setup.bash` fails under `set -u`.** Source it with `set +u` around it.
+
+## Control panel (`vacuum_gui`)
+
+One PySide6 window that starts and stops the whole stack, draws everything the robot sees
+and knows from ROS topics, and drives it. Gazebo and RViz are **not** embedded: the map,
+camera, LiDAR, plans and dirt are drawn natively, so the simulation can run headless (about
+half the GPU load of a Gazebo window) and RViz becomes optional. The buttons for the real
+Gazebo and RViz windows are still there.
+
+```bash
+# once
+/usr/bin/python3 -m pip install --user --break-system-packages PySide6
+
+cd ~/vacuum_sim && source /opt/ros/jazzy/setup.zsh
+colcon build --symlink-install --packages-select vacuum_gui
+source install/setup.zsh
+
+ros2 run vacuum_gui vacuum_gui                  # the panel
+ros2 launch vacuum_gui gui.launch.py            # same thing as a launch file
+ros2 run vacuum_gui vacuum_gui_install_desktop  # optional: ~/.local/bin/vacuum_gui + menu entry
+```
+
+`ros2 run` is the way to start it: ROS 2 installs an ament_python package's entry points in
+`install/vacuum_gui/lib/vacuum_gui/` and does not add that directory to `PATH`. The desktop
+installer writes `~/.local/bin/vacuum_gui`, a wrapper that sources ROS and the workspace and
+then runs `ros2 run vacuum_gui vacuum_gui "$@"`, so the bare name works in a login shell.
+
+| Panel | What it shows / does |
+|---|---|
+| **Stack** | every launch option with defaults remembered between runs: mode (AMCL on a saved map / SLAM), map, world, spawn pose, odometry source, headless, camera, dirt (count, seed, scale, stubborn share, brush radius, clean, randomise), Nav2 delay, and the live switches (gamepad, detector, recording, mission + meter, re-clean source, autostart, RViz). The exact command line is shown with a copy button, pre-flight checks are listed with fix hints, and `Kill leftovers` cleans up after a crashed run. Launch-time options are greyed out while the stack runs; changing one raises a `restart needed` badge with one-click `Apply & restart`. |
+| **Map** | `/map` occupancy grid, `/coverage_map` cleaned area, `/scan` overlay, global `/plan` and `/local_plan`, `/coverage/plan_markers`, detected dirt from `/dirt/detections` with class colour and confidence labels, ground-truth dirt from `/dirt/markers`, AMCL particles, both costmaps, robot trail. Layer toggles in a side list; drag to pan, wheel to zoom, `Ctrl+M` to fit. A click is a Nav2 goal, a 2D pose estimate or "inspect this dirt spot", chosen in a selector. |
+| **Camera** | `/camera/image` and `/dirt/debug_image` (boxes), each with its real frame rate and a `no signal` state instead of a frozen picture. |
+| **Health** | a light per node (`/controller_server`, `/bt_navigator`, `/amcl` or `/slam_toolbox`, `/coverage_mission`, `/dirt_detector`, `/dirt_cleaner`, `/ros_gz_bridge`, …), a light per key topic (`/clock`, `/scan`, `/odom`, `/tf`, `/camera/image`, `/dirt/detections`) and one for the TF chain. Click a red light for the reason and the fix. |
+| **Mission** | plan (preview), start, stop, reset meter, the coverage progress bar (reachable and all-free numbers labelled), the per-piece list from `/coverage/plan_markers`, the re-clean switch, map save/load. |
+| **Robot** | hold-to-drive pad with linear/angular limits under the Nav2 caps, the gamepad indicator driven by `/joy`, and the emergency stop: it cancels the Nav2 goal and the mission and keeps publishing zero `/cmd_vel` at 10 Hz until released, because gz DiffDrive re-applies the last command. |
+| **Dataset** | start/stop the labelled-frame recorder as its own process, count episodes and images on disk, and run `tools/dirt_dataset/package_dataset.py` to build the zip. |
+| **Runs** | browse `~/vacuum_runs/run_*/`, read `summary.json`, compare two runs (coverage up, time/distance/missed area down) and plot `coverage.csv` over time. |
+| **Experiments** | seeds × {no re-clean, map re-clean, vision re-clean}, headless, one at a time, with an on-screen table and `results.csv`. `false_recleans` counts clean-up spots that removed no patch during that pass (an approximation: pass end times from the run report, patch removal times from the dirt summary). |
+| **Tools** | live `conf`/`iou`/`max_range`/`min_hits`/`clear_misses` on `/dirt_detector` via `ros2 param set`, screenshots and GIFs of the map or camera into `~/vacuum_runs/screenshots`, rosbag record toggle. |
+| **Log** | one tab per managed process plus `All`, levels coloured, filter, save to file. |
+| **Help** | panel guide and shortcuts (`F1`). |
+
+**What is launch-time and what is live.** `vacuum.launch.py` fixes the world, the map, the
+camera in the URDF, the dirt layout, the odometry source and the Nav2 delay. Everything else
+is a separate process the panel owns and can stop without touching Gazebo:
+
+| Live switch | process |
+|---|---|
+| gamepad | `ros2 launch vacuum_teleop teleop_joy.launch.py` |
+| detector | `ros2 launch vacuum_vision detector.launch.py` |
+| mission + meter | `ros2 launch vacuum_coverage coverage.launch.py` (generated params file when re-clean is off) |
+| recording | `ros2 run vacuum_gazebo dirt_dataset.py` |
+| RViz | `ros2 run rviz2 rviz2 -d <navigation.rviz>` |
+
+That is why the preview shows `teleop:=none coverage:=false meter:=false detector:=false
+collect_dataset:=false rviz:=false`: those parts are started afterwards by the panel. The
+camera is the exception (it is part of the URDF), so detector and recording only work when
+the launch had `cameras:=true`; the panel says so instead of failing silently.
+
+**Threading.** rclpy spins in a `MultiThreadedExecutor` on its own thread; callbacks store the
+latest message and emit Qt signals, and commands from the GUI go back through a queue drained
+by a node timer, so no rclpy call ever runs on the GUI thread. Images are downscaled to
+≤480 px and rate-limited (10 fps), the map redraws at 2 fps, scans at 5 fps. All ROS access
+sits behind `vacuum_gui/backend.py`, so a real-robot backend (STM32 + RPLidar) can replace the
+simulation backend without touching a panel.
+
+**Shutdown.** Every child runs in its own session; stopping signals the whole process group
+(SIGINT, then SIGTERM, then SIGKILL), which is what keeps `gz sim`, its ruby plugin host and
+`rviz2` from surviving a stop. Closing the window while the stack runs asks whether to stop
+it or leave it running.
+
+Settings, presets and the dock layout live in `~/.config/vacuum_gui/`; runs, dirt truth,
+datasets, bags and screenshots under `~/vacuum_runs/`. Nothing is written into the repository.
+
+```bash
+cd src/vacuum_gui && python3 -m pytest test -q     # 64 tests, no ROS and no display
+```
+
+## `vacuum_gui`: status, and what is left to do
+
+**Verified on this machine** (Ubuntu 24.04, ROS 2 Jazzy, no display attached, `QT_QPA_PLATFORM=offscreen`):
+
+- the package builds (`colcon build --symlink-install`) and `ros2 pkg executables vacuum_gui`
+  lists `vacuum_gui` and `vacuum_gui_install_desktop`;
+- the 64 ROS-free tests pass (command lines, settings/presets, occupancy-grid → RGBA and
+  world↔pixel, scan/path maths, rate/RTF/localisation/health, process groups and orphan
+  escalation with real child processes, run-report parsing and comparison, the experiment
+  matrix + CSV + runner state machine against a fake `ros2`);
+- the window renders offscreen with synthetic map, LiDAR, plans, dirt, particles, camera,
+  dashboard and health;
+- against a real headless stack (`vacuum_bringup vacuum.launch.py headless:=true`) the panel
+  received the 99×98 occupancy grid, `map -> base_footprint` pose, `/scan`, `/clock` with a
+  ~0.94 real-time factor, Nav2 lifecycle states and a fully green health panel.
+
+**Not verified yet - check these on the machine with a GPU/display:**
+
+1. **Start / Stop from the panel.** The last end-to-end attempt never launched the sim because
+   a pre-flight modal was open in the test harness; the launch that the panel builds is the one
+   verified above, but the button path itself needs one run. If Start does nothing, the `sim`
+   tab in **Log** has the reason.
+2. **Mission services.** Press *Plan* then *Start cleaning* with the coverage switch on; expect
+   `/coverage/plan_markers` to draw the wall loops and lanes and `/coverage/status` to narrate.
+   *Stop* and *Reset meter* should answer through the same path.
+3. **A Nav2 goal from the map.** Click in "Nav2 goal" mode; the robot must drive, `/plan` must
+   draw, and the action state should go `navigating → succeeded`.
+4. **Camera panels.** Start with the camera on (`cameras:=true`) and check `/camera/image` and
+   `/dirt/debug_image` frame rates; the boxes only appear while the detector is running and
+   publishing.
+5. **Detector tuning.** Change `conf` in **Tools** and confirm with
+   `ros2 param get /dirt_detector conf`.
+6. **Recording, packaging, rosbag, GIF.** Start recording during a mission, check the episode
+   folder grows, then package it. The GIF export needs Pillow (`python3-pil`).
+7. **E-stop.** While a mission runs, press `Space`: the mission must stop and `/cmd_vel` must
+   stay zero until released (`ros2 topic echo /cmd_vel`).
+8. **Wayland.** The panel works on native Wayland in principle; `--xcb` (or
+   `ui.qt_platform: "xcb"` in `settings.json`) is the fallback if the Qt Wayland plugin
+   misbehaves. The Gazebo and RViz windows the panel launches already go through XWayland.
+
+**Known issues / punch list**
+
+- A forced stop can leave one `ros_gz_bridge` behind (seen once). A leftover bridge publishes a
+  **second `/clock`**, and that breaks AMCL (`Detected jump back in time`, no `map -> odom`)
+  for the next run. `Kill leftovers` exists for exactly this; the stop path should also reap
+  the bridge group, and the pre-flight check now lists bridges and Nav2 leftovers.
+- `false_recleans` in the experiment table is a proxy, not ground truth (see the Experiments
+  row). A real measure needs per-pass dirt counts in `summary.json`.
+- The Stack panel is scrollable but tight at 950 px window height; collapsing the dirt and
+  startup groups by default would help.
+- Health marks a node "optional" only when it is absent and the configuration does not need
+  it; when a node dies mid-run the row goes red but nothing beeps - there is no notification.
+- The map view draws marker arrays as points/lines; `ARROW` markers from third-party tools are
+  drawn as circles at their origin rather than as arrows.
 
 ## Status
 
