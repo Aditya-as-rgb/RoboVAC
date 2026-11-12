@@ -466,42 +466,58 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /waypoints
       Value: true
-    - Class: rviz_default_plugins/Camera
+    - Class: rviz_default_plugins/MarkerArray
       Enabled: true
-      Far Plane Distance: 100
-      Image Rendering: background and overlay
+      Name: Dirt detected (camera)
+      Namespaces:
+        {}
+      Topic:
+        Depth: 5
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /dirt/detected_markers
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: false
+      Name: Dirt ground truth
+      Namespaces:
+        {}
+      Topic:
+        Depth: 5
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /dirt/markers
+      Value: false
+    - Class: rviz_default_plugins/Image
+      Enabled: true
+      Max Value: 1
+      Median window: 5
+      Min Value: 0
       Name: Camera
-      Overlay Alpha: 0.5
+      Normalize Range: true
       Topic:
         Depth: 5
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /color_camera/image_raw
+        Value: /camera/image
       Value: true
-      Visibility:
-        Amcl Particle Swarm: true
-        Controller:
-          Local Costmap: true
-          Local Plan: true
-          Polygon: true
-          Trajectories: true
-          Value: true
-          VoxelGrid: true
-        Global Planner:
-          Global Costmap: true
-          Path: true
-          Polygon: true
-          Value: true
-          VoxelGrid: true
-        Grid: true
-        LaserScan: true
-        Map: true
-        MarkerArray: true
-        RobotModel: true
-        TF: true
-        Value: true
-      Zoom Factor: 1
+    - Class: rviz_default_plugins/Image
+      Enabled: true
+      Max Value: 1
+      Median window: 5
+      Min Value: 0
+      Name: Dirt detections
+      Normalize Range: true
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /dirt/debug_image
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
@@ -557,6 +573,8 @@ Visualization Manager:
     Saved: ~
 Window Geometry:
   Camera:
+    collapsed: false
+  Dirt detections:
     collapsed: false
   Displays:
     collapsed: false

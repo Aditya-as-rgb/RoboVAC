@@ -21,6 +21,10 @@
 #   collect_dataset:=true record labelled camera images (YOLO format) into dataset_dir
 #                       (~/vacuum_runs/dataset); turns the camera on, use dirt_clean:=false
 #                       and see tools/dirt_dataset/ for the batch script and Colab notebook
+#   cameras:=true       run the front floor camera (RViz shows it in the "Camera" panel)
+#   detector:=true      run the dirt detector on the camera (vacuum_vision): confirmed spots on
+#                       /dirt/detections, markers on /dirt/detected_markers, boxes on
+#                       /dirt/debug_image (RViz "Dirt detections" panel). Turns the camera on.
 # What is left is counted in /dirt/remaining and in ~/vacuum_runs/dirt/dirt_summary_*.json.
 #
 # Start cleaning (if autostart:=false), or stop it, from another terminal:
@@ -51,6 +55,7 @@ def generate_launch_description():
     bringup_share = get_package_share_directory('vacuum_bringup')
     coverage_share = get_package_share_directory('vacuum_coverage')
     teleop_share = get_package_share_directory('vacuum_teleop')
+    vision_share = get_package_share_directory('vacuum_vision')
 
     def include(pkg_share, launch_file, args):
         return IncludeLaunchDescription(
@@ -74,7 +79,8 @@ def generate_launch_description():
         # the dataset recorder needs the camera, so collecting switches it on by itself
         'enable_cameras': PythonExpression([
             "'true' if '", LaunchConfiguration('cameras'), "' == 'true' or '",
-            LaunchConfiguration('collect_dataset'), "' == 'true' else 'false'"]),
+            LaunchConfiguration('collect_dataset'), "' == 'true' or '",
+            LaunchConfiguration('detector'), "' == 'true' else 'false'"]),
     }.items())
 
     # the brush: takes dirt off the floor as the robot drives over it (only when there is dirt)
@@ -139,7 +145,11 @@ def generate_launch_description():
         DeclareLaunchArgument('dirt_randomize', default_value='false', choices=['true', 'false'],
                               description='random floor colour + light level per dirt_seed'),
         DeclareLaunchArgument('cameras', default_value='false', choices=['true', 'false'],
-                              description='run the front floor camera (collect_dataset turns it on)'),
+                              description='run the front floor camera (collect_dataset and detector turn it on)'),
+        DeclareLaunchArgument('detector', default_value='false', choices=['true', 'false'],
+                              description='run the dirt detector (YOLO) on the floor camera'),
+        DeclareLaunchArgument('detector_model', default_value='',
+                              description='path to dirt_yolo11n.onnx ("" = find it in the repo)'),
         DeclareLaunchArgument('collect_dataset', default_value='false', choices=['true', 'false'],
                               description='record labelled dirt images while the mission runs'),
         DeclareLaunchArgument('dataset_dir', default_value='~/vacuum_runs/dataset',
@@ -164,6 +174,11 @@ def generate_launch_description():
         TimerAction(period=LaunchConfiguration('nav_delay'), actions=[dirt_cleaner]),
         TimerAction(period=LaunchConfiguration('nav_delay'), actions=[dataset]),
         stop_when_dataset_done,
+        TimerAction(period=LaunchConfiguration('nav_delay'), actions=[
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(os.path.join(vision_share, 'launch', 'detector.launch.py')),
+                launch_arguments={'model': LaunchConfiguration('detector_model')}.items(),
+                condition=IfCondition(LaunchConfiguration('detector')))]),
         TimerAction(period=LaunchConfiguration('nav_delay'), actions=[
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(os.path.join(teleop_share, 'launch', 'teleop_joy.launch.py')),

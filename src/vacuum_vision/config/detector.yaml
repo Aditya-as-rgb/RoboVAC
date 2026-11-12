@@ -1,0 +1,18 @@
+# Parameters for the dirt detector node (vacuum_vision/detector_node.py).
+dirt_detector:
+  ros__parameters:
+    model: ''                 # '' = find models/dirt_detector/dirt_yolo11n.onnx in the repo; or a full path
+    image_topic: camera/image
+    info_topic: camera/camera_info
+    map_frame: map
+    camera_frame: camera_optical_frame
+    rate: 5.0                 # detections per second (CPU cost; the camera runs at 15 Hz)
+    conf: 0.25                # model confidence threshold
+    iou: 0.5                  # NMS overlap threshold
+    threads: 2                # onnxruntime CPU threads
+    max_range: 1.5            # m: dirt farther from the camera than this is ignored (a few pixels, bad position)
+    merge_radius: 0.15        # m: sightings closer than this are one patch
+    min_hits: 3               # frames that must see a patch before it becomes a confirmed spot
+    clear_misses: 10          # frames that look straight at a confirmed spot and find nothing -> cleaned
+    clear_range: 1.2          # m: only judge "gone" within this distance of the camera
+    debug_image: true         # publish dirt/debug_image with boxes (only while someone subscribes)
