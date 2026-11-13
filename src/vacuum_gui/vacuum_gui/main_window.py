@@ -32,8 +32,8 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox,
                                QDockWidget, QFileDialog, QHBoxLayout, QInputDialog,
                                QScrollArea,
                                QLabel, QMainWindow, QMessageBox, QPushButton,
-                               QSizePolicy, QSplitter, QTextBrowser, QToolBar, QVBoxLayout,
-                               QWidget)
+                               QSizePolicy, QSplitter, QTabWidget, QTextBrowser, QToolBar,
+                               QVBoxLayout, QWidget)
 
 from . import paths, preflight, settings, theme
 from .backend import NullBackend
@@ -328,6 +328,10 @@ class MainWindow(QMainWindow):
         self.tabifyDockWidget(self.dock_log, self.dock_experiments)
         self.tabifyDockWidget(self.dock_log, self.dock_tools)
         self.dock_log.raise_()
+        self.setTabPosition(Qt.DockWidgetArea.RightDockWidgetArea,
+                            QTabWidget.TabPosition.North)
+        self.setTabPosition(Qt.DockWidgetArea.BottomDockWidgetArea,
+                            QTabWidget.TabPosition.North)
 
         self.resizeDocks([self.dock_launch], [420], Qt.Orientation.Horizontal)
         self.resizeDocks([self.dock_camera], [420], Qt.Orientation.Horizontal)
@@ -1042,6 +1046,11 @@ class MainWindow(QMainWindow):
                 self.restoreState(QByteArray(base64.b64decode(data['state'])))
         except (ValueError, TypeError):
             pass
+        # a stale or offscreen geometry can be smaller than the layout's minimum, which
+        # makes the form unreadable until the user resizes; fall back to a sane size
+        minimum = self.minimumSizeHint()
+        if self.width() < max(1200, minimum.width()) or self.height() < max(760, minimum.height()):
+            self.resize(max(1500, minimum.width()), max(950, minimum.height()))
         self.map_panel.view.set_click_mode(self._map_click_mode)
 
     def _save_layout(self):

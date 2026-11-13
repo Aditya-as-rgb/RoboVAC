@@ -172,6 +172,7 @@ class LaunchPanel(QWidget):
         self.map = QComboBox()
         self.map.setEditable(True)
         self.map.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.map.setMinimumWidth(150)
         self._fill_maps()
         self.map.lineEdit().setPlaceholderText('default: %s' % paths.default_map())
         browse_map = QToolButton()
@@ -258,7 +259,8 @@ class LaunchPanel(QWidget):
         det_row = QHBoxLayout()
         det_row.addWidget(self.detector)
         self.detector_model = QLineEdit()
-        self.detector_model.setPlaceholderText('model .onnx ("" = find it in the repo)')
+        self.detector_model.setMinimumWidth(110)
+        self.detector_model.setPlaceholderText('model .onnx ("" = repo default)')
         det_row.addWidget(self.detector_model, 1)
         cap_layout.addLayout(det_row)
         self._fields['detector_model'] = self.detector_model
@@ -266,6 +268,7 @@ class LaunchPanel(QWidget):
         cap_layout.addWidget(self.collect_dataset)
         ds_row = QHBoxLayout()
         self.dataset_dir = QLineEdit()
+        self.dataset_dir.setMinimumWidth(110)
         self.dataset_dir.setPlaceholderText('~/vacuum_runs/dataset')
         self.dataset_max_s = QDoubleSpinBox()
         self.dataset_max_s.setRange(30.0, 36000.0)
@@ -351,6 +354,7 @@ class LaunchPanel(QWidget):
         self._add(dirt_layout, 'dirt_randomize', 'Variation', self.dirt_randomize,
                   launch=True, tip='For dataset collection: stops a model learning one floor')
         self.dirt_dir = QLineEdit()
+        self.dirt_dir.setMinimumWidth(110)
         self.dirt_dir.setPlaceholderText('~/vacuum_runs/dirt')
         self._add(dirt_layout, 'dirt_dir', 'Layout folder', self.dirt_dir, launch=True)
         self._collapsible(dirt_box, False)
@@ -387,7 +391,7 @@ class LaunchPanel(QWidget):
         preview_header.addWidget(copy_button)
         preview_layout.addWidget(self.preview)
         preview_layout.addLayout(preview_header)
-        outer.addWidget(preview_box)
+        form.addWidget(preview_box)
 
         # --- status + buttons -------------------------------------------------
         self.badge = QLabel('not running')
