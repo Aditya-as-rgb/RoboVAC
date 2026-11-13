@@ -25,6 +25,10 @@ coverage_mission:
     reclean_passes: 2        # at most this many extra passes (stops early when nothing is left)
     reclean_slack: 0.08      # spots are picked for clean_radius - slack (Nav2 stops within its goal tolerance)
     reclean_min_area: 0.015  # m^2, dirty patches smaller than this are ignored
+    reclean_source: map      # map: from the coverage tracker's gaps | vision: from /dirt/detections
+    detections_topic: dirt/detections
+    reclean_min_conf: 0.3    # vision: weak sightings are ignored
+    reclean_max_age: 30.0    # s: detections older than this mean the detector is not running
     # --- run report, written to <report_dir>/run_YYYYmmdd_HHMMSS/ when a mission ends ---
     report: true
     report_dir: ~/vacuum_runs

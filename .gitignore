@@ -25,3 +25,5 @@ maps_out/
 
 # one-off patcher that already applied its edits to the launch files
 qt_fix.py
+
+.gitignore

@@ -37,7 +37,12 @@ sudo apt install -y ros-jazzy-desktop ros-jazzy-ros-gz ros-jazzy-navigation2 \
 ```
 
 Training the detector needs Ultralytics, but only in Colab (or any separate Python
-environment); the ROS side does not.
+environment); the ROS side does not. Running the detector on the robot (vision-guided
+clean-up, `detector:=true`) does need ONNX Runtime in the same Python as `rclpy`:
+
+```bash
+pip install --user --break-system-packages onnxruntime "numpy<2"
+```
 
 ## Build
 
@@ -135,6 +140,12 @@ reachable floor. 96.7 % of the reachable area, 75.7 % of all free floor, 0.197 m
    cells (greedy set cover), drives to each one and cleans it, and repeats up to
    `reclean_passes` times (default 2). This uses only the map and the robot's own track, no
    camera. It is the baseline the vision-guided version is compared with.
+   With `reclean_source:=vision` the pass instead chases the confirmed dirt spots the floor
+   camera publishes on `/dirt/detections` (see "Vision-guided re-clean" below): the
+   coverage tracker's opinion is not consulted, because a stubborn patch is "cleaned"
+   geometrically the moment the robot passes it while the camera still sees it. The map's
+   gaps the camera never reported are counted in the report (`unseen_m2`) and left alone,
+   so blind and vision runs produce comparable numbers.
 
 The meter marks every floor cell within `clean_radius` (0.22 m) of where the robot has
 been. In RViz: *Cleaned area* (blue, `/coverage_map`), *Coverage plan* (orange wall loops,
@@ -276,14 +287,55 @@ Dust (translucent) is often missed; crumbs and spills are found reliably. The sp
 from only 66 test boxes. **These are simulation numbers only.** The model has not yet been tested on
 real floor photos, which is the number that decides how far it can be trusted.
 
+### Vision-guided re-clean
+
+The detector feeds the clean-up pass: run the mission with `reclean_source:=vision` and the
+spots come from what the camera still sees instead of from the coverage map. The flag starts
+the detector (and the camera) by itself:
+
+```bash
+ros2 launch vacuum_bringup vacuum.launch.py dirt:=12 dirt_seed:=3 \
+  reclean_source:=vision autostart:=true
+```
+
+How it works, in the mission (`vacuum_coverage/reclean.py`):
+
+1. Each confirmed spot on `/dirt/detections` is stamped into a dirty mask of the map (every
+   reachable cell within `clean_radius` of the sighting). A detection is dirt, not a pose.
+2. The same greedy set cover as the map pass runs on that mask, so spots land on cells the
+   robot can actually stand on, nearest-first — a patch seen against a wall or under the
+   sofa is snapped to reachable floor.
+3. The coverage tracker is *not* asked for permission: a stubborn patch counts as cleaned on
+   the map the moment the robot drives near it, yet the camera keeps seeing it, and that is
+   exactly the case this pass is for. The detector drops a spot only after looking at it and
+   finding nothing, so the loop ends by itself (and `reclean_passes` bounds it).
+4. If the detector is not running, reports nothing, or its spots are older than
+   `reclean_max_age`, the pass logs a warning and falls back to the map plan.
+
+The run report records the source of every clean-up pass (`cleanup[].source`), the number of
+detections that went in, and `unseen_m2` — dirty floor the map knew about but the camera did
+not report. That is what makes the blind-vs-vision comparison readable: same seeds, same
+mission, only `reclean_source` changes:
+
+```bash
+ros2 launch vacuum_bringup vacuum.launch.py dirt:=12 dirt_seed:=3 reclean_source:=map    autostart:=true
+ros2 launch vacuum_bringup vacuum.launch.py dirt:=12 dirt_seed:=3 reclean_source:=vision autostart:=true
+```
+
+Compare each run's `summary.json` (`cleanup`, `missed_area_m2`, `distance_m`, `duration_s`)
+and `dirt_summary_*.json` for what is physically left on the floor.
+
 ## Tests
 
 ```bash
-python3 -m pytest src/vacuum_coverage/test src/vacuum_gazebo/test -q
+python3 -m pytest src/vacuum_coverage/test src/vacuum_gazebo/test src/vacuum_vision/test -q
 ```
 
-No ROS or Gazebo is needed for these: planner, controller model, re-clean, report, mission
-sequencing, dirt generator, brush model, camera labelling, dataset recorder and packaging.
+No ROS or Gazebo is needed for these: planner, controller model, re-clean (map and vision),
+run report, mission sequencing, dirt generator, brush model, camera labelling, dataset
+recorder, packaging, detector geometry and spot tracking. `vacuum_vision/test/test_labels_geometry.py`
+also checks that the training labeller and the detector agree on the camera model, since a
+drift between those two copies would silently poison every label.
 
 ## Gamepad teleop
 
@@ -495,9 +547,12 @@ Bluetooth). Maps are saved into `maps/` and can be loaded with `slam:=False`.
 The coverage mission, meter and one-command bringup run in Gazebo. The re-clean pass and run
 report are unit-tested; the coverage figures quoted above (96.7 % / 75.7 %) are from the offline
 planner. Dirt generation and the brush model are in and tested. The labelled-dataset pipeline has
-been run in simulation (10 episodes) and a first dirt detector trained on it (see above). The
-detector is not yet connected to the robot: the re-clean pass still plans from the map, not from
-what the camera sees.
+been run in simulation (10 episodes) and a first dirt detector trained on it (see above).
+
+The detector now feeds the mission: `reclean_source:=vision` plans the clean-up pass from the
+confirmed spots on `/dirt/detections` instead of from the coverage map, falling back to the
+map plan when the camera has nothing usable. The decision logic is unit-tested offline; the
+blind-vs-vision comparison has not been run as a full controlled experiment yet.
 
 ## Roadmap
 
@@ -505,20 +560,20 @@ Roughly in order, with honest status.
 
 1. **Evaluate the detector on real floor photos — next.** Sim-only scores say little about a real
    floor; this decides how much to trust the model.
-2. **Vision-guided re-clean — next.** A detector node that runs `models/dirt_detector/*.onnx` on
-   `/camera/image`, turns each box into a floor position (the labelling geometry run backwards),
-   merges repeated sightings, and hands the spots to the existing re-clean planner.
-3. **Blind vs vision comparison — planned.** Same dirt seeds run three ways (no re-clean,
-   map-based re-clean, vision-based re-clean): dirt left, extra time and distance, false re-cleans.
-4. **Stop on signal loss — planned.** gz's DiffDrive keeps applying the last
+2. **Run the blind vs vision comparison — next.** The mission now supports both sources
+   (`reclean_source:=map|vision`), each writing its source, detections and `unseen_m2` into
+   `summary.json`. What is missing is the controlled batch: the same dirt seeds run three
+   ways (no re-clean, map re-clean, vision re-clean), then a table of dirt left, extra time
+   and distance, and false re-cleans.
+3. **Stop on signal loss — planned.** gz's DiffDrive keeps applying the last
    `/cmd_vel`, so a dropped Bluetooth link leaves the robot driving. Plan:
    `twist_mux` with the joystick on a high-priority input, Nav2 on a
    low-priority one, and a ~0.5 s timeout.
-5. **Finish the map loop — partly done.** `save_map.sh` always writes to
+4. **Finish the map loop — partly done.** `save_map.sh` always writes to
    `<workspace>/maps`, and AMCL loads it with
    `slam:=False map:=<workspace>/maps/<name>.yaml`. Remaining:
    `navigation.launch.py` still defaults to `vacuum_gazebo/maps`.
-6. **More environments — planned.** A room generator for new worlds and maps, so the detector and
+5. **More environments — planned.** A room generator for new worlds and maps, so the detector and
    the coverage planner are not tuned to one living room.
-7. **Own robot description — planned.** Replace `vacuum_description` with our
+6. **Own robot description — planned.** Replace `vacuum_description` with our
    own URDF, then retune the Nav2 footprint and inflation.

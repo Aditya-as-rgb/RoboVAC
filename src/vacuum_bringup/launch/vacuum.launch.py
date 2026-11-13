@@ -25,6 +25,8 @@
 #   detector:=true      run the dirt detector on the camera (vacuum_vision): confirmed spots on
 #                       /dirt/detections, markers on /dirt/detected_markers, boxes on
 #                       /dirt/debug_image (RViz "Dirt detections" panel). Turns the camera on.
+#   reclean_source:=vision  clean-up spots come from what the camera still sees instead of from
+#                       the coverage gaps (runs the detector for you). Default 'map'.
 # What is left is counted in /dirt/remaining and in ~/vacuum_runs/dirt/dirt_summary_*.json.
 #
 # Start cleaning (if autostart:=false), or stop it, from another terminal:
@@ -76,11 +78,13 @@ def generate_launch_description():
         'dirt_scale': LaunchConfiguration('dirt_scale'),
         'dirt_stubborn': LaunchConfiguration('dirt_stubborn'),
         'dirt_randomize': LaunchConfiguration('dirt_randomize'),
-        # the dataset recorder needs the camera, so collecting switches it on by itself
+        # the dataset recorder needs the camera, so collecting switches it on by itself;
+        # so does vision-guided clean-up (it needs the detector's camera feed)
         'enable_cameras': PythonExpression([
             "'true' if '", LaunchConfiguration('cameras'), "' == 'true' or '",
             LaunchConfiguration('collect_dataset'), "' == 'true' or '",
-            LaunchConfiguration('detector'), "' == 'true' else 'false'"]),
+            LaunchConfiguration('detector'), "' == 'true' or '",
+            LaunchConfiguration('reclean_source'), "' == 'vision' else 'false'"]),
     }.items())
 
     # the brush: takes dirt off the floor as the robot drives over it (only when there is dirt)
@@ -164,6 +168,9 @@ def generate_launch_description():
         DeclareLaunchArgument('coverage', default_value='true', choices=['true', 'false'],
                               description='start the coverage mission + meter'),
         DeclareLaunchArgument('meter', default_value='true', choices=['true', 'false']),
+        DeclareLaunchArgument('reclean_source', default_value='map', choices=['map', 'vision'],
+                              description='clean-up spots from the map gaps (map) or from confirmed '
+                                          'dirt seen by the floor camera (vision; runs the detector)'),
         DeclareLaunchArgument('autostart', default_value='false', choices=['true', 'false'],
                               description='begin cleaning once Nav2 and the robot pose are ready'),
         DeclareLaunchArgument('nav_delay', default_value='8.0',
@@ -178,7 +185,9 @@ def generate_launch_description():
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(os.path.join(vision_share, 'launch', 'detector.launch.py')),
                 launch_arguments={'model': LaunchConfiguration('detector_model')}.items(),
-                condition=IfCondition(LaunchConfiguration('detector')))]),
+                condition=IfCondition(PythonExpression([
+                    "'", LaunchConfiguration('detector'), "' == 'true' or '",
+                    LaunchConfiguration('reclean_source'), "' == 'vision'"])))]),
         TimerAction(period=LaunchConfiguration('nav_delay'), actions=[
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(os.path.join(teleop_share, 'launch', 'teleop_joy.launch.py')),
@@ -187,6 +196,7 @@ def generate_launch_description():
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(os.path.join(coverage_share, 'launch', 'coverage.launch.py')),
                 launch_arguments={'autostart': LaunchConfiguration('autostart'),
-                                  'meter': LaunchConfiguration('meter')}.items(),
+                                  'meter': LaunchConfiguration('meter'),
+                                  'reclean_source': LaunchConfiguration('reclean_source')}.items(),
                 condition=IfCondition(LaunchConfiguration('coverage')))]),
     ])

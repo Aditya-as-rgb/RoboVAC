@@ -101,10 +101,20 @@ class DirtDetectorNode(Node):
         try:
             tf = self.tf_buffer.lookup_transform(self.map_frame, frame, msg.header.stamp,
                                                  timeout=Duration(seconds=0.05))
-        except TransformException as e:
-            self.get_logger().warn('no TF %s -> %s yet: %s' % (self.map_frame, frame, e),
-                                   throttle_duration_sec=5.0)
-            return
+        except TransformException:
+            # The camera frame is usually a few milliseconds ahead of odom -> base_footprint
+            # (separate publishers on the same sim clock), so the exact-stamp lookup fails
+            # often while every other frame succeeds. The mount is rigid: the newest
+            # transform is the same camera pose to well under a millimetre.
+            try:
+                tf = self.tf_buffer.lookup_transform(self.map_frame, frame, Time(),
+                                                     timeout=Duration(seconds=0.05))
+            except TransformException as e:
+                self.get_logger().warn('no TF %s -> %s yet: %s' % (self.map_frame, frame, e),
+                                       throttle_duration_sec=5.0)
+                return
+            self.get_logger().info('image stamp is ahead of TF for %s; using the latest transform'
+                                   % frame, throttle_duration_sec=30.0)
         self.last_t = t
         q, p = tf.transform.rotation, tf.transform.translation
         pose = CameraPose.from_quaternion(q.x, q.y, q.z, q.w, (p.x, p.y, p.z))

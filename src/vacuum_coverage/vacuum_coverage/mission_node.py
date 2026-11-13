@@ -66,6 +66,12 @@ class CoverageMission(Node):
         self.declare_parameter('reclean_passes', 2)
         self.declare_parameter('reclean_slack', 0.08)       # m, Nav2 stops within its goal tolerance
         self.declare_parameter('reclean_min_area', 0.015)    # m^2, ignore smaller dirty patches
+        # where the clean-up pass looks for dirt: the coverage tracker's gaps ('map') or
+        # the confirmed spots the floor camera publishes on /dirt/detections ('vision')
+        self.declare_parameter('reclean_source', 'map')
+        self.declare_parameter('detections_topic', 'dirt/detections')
+        self.declare_parameter('reclean_min_conf', 0.3)
+        self.declare_parameter('reclean_max_age', 30.0)      # s, older detections mean a dead detector
         # run report (CSV + summary + PNG) written when a mission ends
         self.declare_parameter('report', True)
         self.declare_parameter('report_dir', '~/vacuum_runs')
@@ -90,10 +96,15 @@ class CoverageMission(Node):
         self._last_snapshot = 0.0
         self._pass_pieces = {}
         self._cleanup_info = []
+        self.det_lock = threading.Lock()
+        self._det_text = None
+        self._det_received = -1e9
 
         latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                              durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.create_subscription(OccupancyGrid, 'map', self._on_map, latched, callback_group=self.cb)
+        self.create_subscription(String, self.get_parameter('detections_topic').value,
+                                 self._on_detections, latched, callback_group=self.cb)
         self.markers_pub = self.create_publisher(MarkerArray, 'coverage/plan_markers', latched)
         self.status_pub = self.create_publisher(String, 'coverage/status', latched)
 
@@ -121,6 +132,33 @@ class CoverageMission(Node):
 
     def _on_map(self, msg):
         self.grid_msg = msg
+
+    def _on_detections(self, msg):
+        """Keep the latest camera spots (latched, so this also fires once at startup)."""
+        with self.det_lock:
+            self._det_text = msg.data
+            self._det_received = self._now()
+
+    def _vision_spots(self):
+        """Confirmed camera spots as (spots, ''), or (None, reason) when there are none usable."""
+        with self.det_lock:
+            text, received = self._det_text, self._det_received
+        if text is None:
+            return None, 'no spots on %s yet' % self.get_parameter('detections_topic').value
+        try:
+            stamp, spots = reclean.parse_detections(
+                text, min_conf=float(self.get_parameter('reclean_min_conf').value))
+        except ValueError as exc:
+            return None, str(exc)
+        if not spots:
+            return None, 'the camera reports nothing confirmed'
+        now = self._now()
+        # sim time starts near 0, so a 0 stamp means "unknown": fall back to when it arrived
+        age = now - stamp if stamp > 0.0 else now - received
+        max_age = float(self.get_parameter('reclean_max_age').value)
+        if age > max_age:
+            return None, 'detections are %.0f s old (is the detector running?)' % age
+        return spots, ''
 
     def _params(self):
         defaults = core.CoverageParams()
@@ -362,23 +400,42 @@ class CoverageMission(Node):
                   % ('main pass' if pass_no == 0 else 'clean-up pass %d' % pass_no, pct))
 
     def _reclean_plan(self, pass_no):
-        """Spots that still need cleaning, given what the tracker has marked so far."""
+        """Spots that still need cleaning, from the map gaps or from the floor camera."""
         pose = self._robot_pose()
         masks = self.plan.masks
         start = (pose[0], pose[1]) if pose is not None else self.run_grid.cell_to_world(*masks.start_cell)
         with self.track_lock:
             covered = self.tracker.covered.copy()
-        extra = reclean.plan_reclean(
-            self.run_grid, masks, self.plan.params, covered, start,
-            slack=float(self.get_parameter('reclean_slack').value),
-            min_area=float(self.get_parameter('reclean_min_area').value))
-        self._cleanup_info.append({'pass': pass_no, 'spots': len(extra.pieces),
+        slack = float(self.get_parameter('reclean_slack').value)
+        min_area = float(self.get_parameter('reclean_min_area').value)
+        source = str(self.get_parameter('reclean_source').value)
+        extra, why = None, ''
+        if source == 'vision':
+            spots, why = self._vision_spots()
+            if spots:
+                extra = reclean.plan_reclean_vision(
+                    self.run_grid, masks, self.plan.params, spots, covered, start,
+                    slack=slack, min_area=min_area,
+                    min_conf=float(self.get_parameter('reclean_min_conf').value))
+                if extra is None:
+                    why = 'the camera saw nothing worth a trip'
+            if extra is None:
+                self.get_logger().warn('vision clean-up has nothing to plan (%s); '
+                                       'falling back to the map' % why)
+        if extra is None:
+            extra = reclean.plan_reclean(
+                self.run_grid, masks, self.plan.params, covered, start,
+                slack=slack, min_area=min_area)
+        self._cleanup_info.append({'pass': pass_no, 'source': extra.source,
+                                   'spots': len(extra.pieces),
                                    'dirty_area_m2': round(extra.missed_m2, 2),
-                                   'left_after_spots_m2': round(extra.left_m2, 2)})
+                                   'left_after_spots_m2': round(extra.left_m2, 2),
+                                   'detections': extra.detections,
+                                   'unseen_m2': round(extra.unseen_m2, 2)})
         if extra.pieces:
             self._pass_pieces[pass_no] = list(extra.pieces)
-            self._say('clean-up pass %d: %d spot(s) for %.2f m2 of dirty floor'
-                      % (pass_no, len(extra.pieces), extra.missed_m2))
+            self._say('clean-up pass %d (%s): %d spot(s) for %.2f m2 of dirty floor'
+                      % (pass_no, extra.source, len(extra.pieces), extra.missed_m2))
         return extra
 
     def _finish_run(self, plan, result):
