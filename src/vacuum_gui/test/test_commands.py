@@ -139,6 +139,20 @@ def test_coverage_params_override_keeps_the_rest_of_the_file(tmp_path):
     assert data['coverage_meter']['ros__parameters']['rate'] == 10.0
 
 
+def test_restart_fields_lists_only_launch_time_options():
+    base = StackConfig(world='living_room.world', dirt=3, teleop=True, coverage=True)
+    current = base.to_dict()
+    current['world'] = 'kitchen.world'
+    current['dirt'] = 5
+    current['teleop'] = False          # live switch: never needs a restart
+    current['coverage'] = False
+    current['unknown_future_key'] = 1
+    assert commands.restart_fields(current, base.to_dict()) == ['world', 'dirt']
+    assert commands.restart_fields(base.to_dict(), base.to_dict()) == []
+    assert commands.restart_fields({}, base.to_dict()) == [
+        name for name in commands.LAUNCH_TIME_FIELDS if base.to_dict().get(name) is not None]
+
+
 def test_stack_config_rejects_unknown_reclean_source():
     assert StackConfig(reclean_source='teleport').reclean_source == 'map'
     assert StackConfig(odom_source='magic').odom_source == 'ground_truth'

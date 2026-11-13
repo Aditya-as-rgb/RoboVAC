@@ -193,8 +193,13 @@ Nothing is written into the repository.
 
 ## Honest status
 
-Tested on this machine without a display: the window renders offscreen with synthetic map,
-camera, detections, plan, scan and dashboard data, and the ROS-free tests pass. The ROS
-subscriptions, services, action client and parameter client are written against the
-Jazzy APIs but were **not exercised against a running Gazebo/Nav2 here**; the checklist
-for verifying them on the robot machine is in the patch notes and in the repository README.
+Tested on this machine without a display: the ROS-free tests pass, the window renders
+offscreen with synthetic data, and the panel has been run against a real headless stack -
+the map, `map -> base_footprint`, `/scan`, `/clock`, Nav2 lifecycle states and the health
+lights all arrived, Start launched the tree and Stop left no `gz`/bridge/Nav2 process
+behind. The services (plan/start/stop/reset), the `NavigateToPose` action, the detector
+parameter client and the camera-facing panels were **not exercised against a running
+Gazebo here**; the checklist for those is in the repository README under
+`vacuum_gui: status, and what is left to do`.
+
+`python3 -m pytest test -q` runs 66 tests.

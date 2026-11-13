@@ -146,6 +146,16 @@ class MapView(QGraphicsView):
         if self._map_item is None or rebox:
             if self._map_item is not None:
                 self.scene().removeItem(self._map_item)
+            if rebox:
+                # overlays from the previous map belong to its pixel grid: drop them
+                if self._coverage_item is not None:
+                    self.scene().removeItem(self._coverage_item)
+                for item in list(self._cost_items.values()):
+                    self.scene().removeItem(item)
+                self._cost_items.clear()
+                self._trail_path = QPainterPath()
+                if self._trail_item is not None:
+                    self._trail_item.setPath(self._trail_path)
             self._map_item = QGraphicsPixmapItem(pixmap)
             self._map_item.setZValue(0)
             self.scene().addItem(self._map_item)

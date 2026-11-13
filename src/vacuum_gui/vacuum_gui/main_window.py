@@ -476,11 +476,17 @@ class MainWindow(QMainWindow):
         if self._stack_running:
             return
         checks = preflight.run_checks(cfg)
-        blocked = preflight.blocking(checks)
-        if blocked:
-            PreflightDialog(checks, self).exec()
-            self._notice('error', 'start blocked by %d pre-flight check(s)' % len(blocked))
-            return
+        if preflight.blocking(checks):
+            dialog = PreflightDialog(checks, self,
+                                     recheck=lambda: preflight.run_checks(cfg),
+                                     killer=self._kill_stale_now)
+            dialog.exec()
+            checks = preflight.run_checks(cfg)      # the dialog can have cleaned up
+            blocked = preflight.blocking(checks)
+            if blocked:
+                self._notice('error', 'start blocked by %d pre-flight check(s): %s'
+                             % (len(blocked), ', '.join(c.name for c in blocked)))
+                return
         warnings = [c for c in checks if not c.ok]
         if warnings:
             dialog = QMessageBox(self)
@@ -511,6 +517,7 @@ class MainWindow(QMainWindow):
         self._set_actions_running(True)
         self._expectations_from_config(cfg)
         self.view_settings['map_mode'] = self._map_click_mode
+        self.experiments_panel.apply_base_config(cfg)
         self._notice('info', 'stack started')
         QTimer.singleShot(1500, lambda: self._start_live_parts(cfg))
 
@@ -544,8 +551,18 @@ class MainWindow(QMainWindow):
         for name in ('rosbag', 'dataset', 'coverage', 'detector', 'teleop', 'rviz'):
             if self.manager.running(name):
                 self.manager.stop(name, int_wait=6.0, term_wait=3.0)
+        sim = self.manager.get('sim')
+        sim_session = sim.pgid if sim is not None else None
         self.manager.stop('sim', int_wait=10.0, term_wait=5.0)
         self.manager.wait_dead(timeout=8.0)
+        # Anything left with the launch's session id came from our tree but escaped its
+        # process group (a gz bridge re-execs, for example). It is ours: kill it without
+        # asking, then report what survived.
+        ours = find_leftovers(session=sim_session) if sim_session else []
+        if ours:
+            kill_leftovers(ours)
+            self._notice('warn', 'killed %d process(es) that escaped the launch group'
+                         % len(ours))
         self._stack_running = False
         self._stopping = False
         self.launch_panel.set_running(False)
@@ -558,12 +575,21 @@ class MainWindow(QMainWindow):
         self.launch_panel.refresh_leftovers()
         leftovers = find_leftovers()
         if leftovers:
-            self._notice('warn', '%d leftover process(es) after stop' % len(leftovers))
+            self._notice('warn', '%d leftover process(es) from an earlier run' % len(leftovers))
             self.prompt_kill_leftovers(leftovers)
         else:
             self._notice('info', 'stopped cleanly, no leftovers')
         if then_start is not None:
             QTimer.singleShot(500, lambda: self.start_stack(then_start))
+
+    def _kill_stale_now(self):
+        """Used by the pre-flight dialog: reap every stack process and wait for it."""
+        self.manager.stop_all(int_wait=5.0, term_wait=3.0)
+        leftovers = find_leftovers()
+        if leftovers:
+            kill_leftovers(leftovers, wait=4.0)
+        self.manager.wait_dead(timeout=6.0)
+        self.launch_panel.refresh_leftovers()
 
     def prompt_kill_leftovers(self, leftovers=None):
         leftovers = leftovers or find_leftovers()
@@ -613,7 +639,8 @@ class MainWindow(QMainWindow):
         elif name == 'collect_dataset':
             self.start_recording() if value else self.stop_recording()
         self._expectations_from_config(cfg)
-        self.launch_panel.set_running(True, cfg)
+        # keep the applied snapshot: a live toggle must not hide a pending restart
+        self.launch_panel.set_running(True)
 
     def _start_teleop(self, cfg):
         env = self.manager.env()

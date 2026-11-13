@@ -33,6 +33,13 @@ import yaml
 
 TRUTHY = ('1', 'true', 'yes', 'on', 'True')
 
+# Options that are baked into the URDF / world / map when the stack starts. Changing one
+# while the stack runs needs a restart; everything else is a separate process.
+LAUNCH_TIME_FIELDS = ('slam', 'map', 'world', 'x_pose', 'y_pose', 'odom_source',
+                      'headless', 'cameras', 'dirt', 'dirt_seed', 'dirt_scale',
+                      'dirt_stubborn', 'dirt_brush', 'dirt_clean', 'dirt_randomize',
+                      'dirt_dir', 'nav_delay', 'qt_platform')
+
 
 def b(value):
     """Python bool -> the 'true'/'false' spelling the launch files declare."""
@@ -227,6 +234,14 @@ class StackConfig:
     def reset_dirt_command(self, ws_map=None):
         """Regeneration needs a launch-time seed, so this is the restart flavour."""
         return self.stack_command(ws_map)
+
+
+def restart_fields(current, applied):
+    """Names of the launch-time options that differ between two config dicts."""
+    current = current or {}
+    applied = applied or {}
+    return [name for name in LAUNCH_TIME_FIELDS
+            if current.get(name) != applied.get(name)]
 
 
 def detector_param_command(values, node='/dirt_detector'):

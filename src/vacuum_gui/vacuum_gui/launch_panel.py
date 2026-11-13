@@ -31,14 +31,10 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox,
                                QSpinBox, QToolButton, QVBoxLayout, QWidget)
 
 from . import paths, preflight
-from .commands import StackConfig, shell_join
+from .commands import LAUNCH_TIME_FIELDS, StackConfig, restart_fields, shell_join
 from .settings import default_presets
 from .ui_common import Dot, SectionHeader, hint
 
-LAUNCH_TIME_FIELDS = ('slam', 'map', 'world', 'x_pose', 'y_pose', 'odom_source',
-                      'headless', 'cameras', 'dirt', 'dirt_seed', 'dirt_scale',
-                      'dirt_stubborn', 'dirt_brush', 'dirt_clean', 'dirt_randomize',
-                      'dirt_dir', 'nav_delay', 'qt_platform')
 
 FIELD_LABELS = {
     'slam': 'mode', 'map': 'map', 'world': 'world', 'x_pose': 'spawn x',
@@ -52,29 +48,57 @@ FIELD_LABELS = {
 
 
 class PreflightDialog(QDialog):
-    def __init__(self, checks, parent=None):
+    """The pre-flight result, with a one-click way out of the common failure.
+
+    "Kill leftovers" reaps the gz/bridge/Nav2 processes of a previous run and re-runs the
+    checks in place, because that is the check that blocks a start most often (and a stale
+    ros_gz_bridge publishes a second /clock that breaks AMCL for the whole next run).
+    """
+
+    def __init__(self, checks, parent=None, recheck=None, killer=None):
         super().__init__(parent)
         self.setWindowTitle('Pre-flight checks')
-        self.resize(640, 420)
+        self.resize(660, 440)
+        self.recheck = recheck
+        self.killer = killer
         layout = QVBoxLayout(self)
-        ok, text = preflight.summary(checks)
-        head = QLabel(text)
-        head.setWordWrap(True)
-        head.setStyleSheet('font-weight: 600;')
-        layout.addWidget(head)
-        body = QPlainTextEdit()
-        body.setReadOnly(True)
+        self.head = QLabel()
+        self.head.setWordWrap(True)
+        self.head.setStyleSheet('font-weight: 600;')
+        layout.addWidget(self.head)
+        self.body = QPlainTextEdit()
+        self.body.setReadOnly(True)
+        layout.addWidget(self.body, 1)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        self.kill_button = QPushButton('Kill leftovers and re-check')
+        self.kill_button.clicked.connect(self._kill)
+        self.kill_button.setVisible(bool(killer and recheck))
+        row.addWidget(self.kill_button)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(self.reject)
+        row.addWidget(buttons)
+        layout.addLayout(row)
+        self._render(checks)
+
+    def _render(self, checks):
+        _ok, text = preflight.summary(checks)
+        self.head.setText(text)
         lines = []
         for check in checks:
             mark = {'ok': 'OK  ', 'warn': 'WARN', 'error': 'FAIL', 'info': 'ok  '}[check.state]
             lines.append('%s  %-22s %s' % (mark, check.name, check.detail))
             if not check.ok and check.hint:
                 lines.append('        fix: %s' % check.hint)
-        body.setPlainText('\n'.join(lines))
-        layout.addWidget(body, 1)
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        self.body.setPlainText('\n'.join(lines))
+        stale = any((not c.ok) and c.name == 'Stale processes' for c in checks)
+        self.kill_button.setEnabled(stale)
+
+    def _kill(self):
+        if self.killer:
+            self.killer()
+        if self.recheck:
+            self._render(self.recheck())
 
 
 class LaunchPanel(QWidget):
@@ -97,6 +121,7 @@ class LaunchPanel(QWidget):
         self._fields = {}
         self._launch_time = {}
         self._building = False
+        self._group_children = {}
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(6, 6, 6, 6)
@@ -178,10 +203,10 @@ class LaunchPanel(QWidget):
         pose_h.addWidget(QLabel('y'))
         pose_h.addWidget(self.y_pose)
         mode_layout.addRow('Spawn pose', pose_row)
-        for widget in (self.x_pose, self.y_pose):
+        for widget, name in ((self.x_pose, 'x_pose'), (self.y_pose, 'y_pose')):
             widget.valueChanged.connect(self._changed)
-        self._launch_time['x_pose'] = self.x_pose
-        self._launch_time['y_pose'] = self.y_pose
+            self._fields[name] = widget
+            self._launch_time[name] = widget
         self.odom_source = QComboBox()
         self.odom_source.addItem('Ground truth (slip-free)', 'ground_truth')
         self.odom_source.addItem('Wheel odometry (drifts)', 'robot_wheels')
@@ -202,6 +227,7 @@ class LaunchPanel(QWidget):
             self.qt_platform.addItem(label, value)
         self._add(mode_layout, 'qt_platform', 'Gazebo Qt platform', self.qt_platform,
                   launch=True, tip='Passed to the launch as qt_platform:=…')
+        self._collapsible(mode_box, True)
         form.addWidget(mode_box)
 
         # --- capabilities ----------------------------------------------------
@@ -270,6 +296,7 @@ class LaunchPanel(QWidget):
         self.gazebo_button.clicked.connect(self.open_gazebo_requested.emit)
         rviz_row.addWidget(self.gazebo_button)
         cap_layout.addLayout(rviz_row)
+        self._collapsible(cap_box, True)
         form.addWidget(cap_box)
 
         # --- dirt ------------------------------------------------------------
@@ -295,10 +322,10 @@ class LaunchPanel(QWidget):
         count_h.addWidget(reseed)
         count_h.addStretch(1)
         dirt_layout.addRow('Patches', count_row)
-        for widget in (self.dirt, self.dirt_seed):
+        for widget, name in ((self.dirt, 'dirt'), (self.dirt_seed, 'dirt_seed')):
             widget.valueChanged.connect(self._changed)
-        self._launch_time['dirt'] = self.dirt
-        self._launch_time['dirt_seed'] = self.dirt_seed
+            self._fields[name] = widget
+            self._launch_time[name] = widget
         self.dirt_scale = QDoubleSpinBox()
         self.dirt_scale.setRange(0.3, 5.0)
         self.dirt_scale.setSingleStep(0.1)
@@ -326,6 +353,7 @@ class LaunchPanel(QWidget):
         self.dirt_dir = QLineEdit()
         self.dirt_dir.setPlaceholderText('~/vacuum_runs/dirt')
         self._add(dirt_layout, 'dirt_dir', 'Layout folder', self.dirt_dir, launch=True)
+        self._collapsible(dirt_box, False)
         form.addWidget(dirt_box)
 
         # --- misc ------------------------------------------------------------
@@ -337,6 +365,7 @@ class LaunchPanel(QWidget):
         self.nav_delay.setSuffix(' s')
         self._add(misc_layout, 'nav_delay', 'Nav2 delay', self.nav_delay, launch=True,
                   tip='Seconds Gazebo gets before Nav2 starts (needs /clock, /scan, TF)')
+        self._collapsible(misc_box, False)
         form.addWidget(misc_box)
         form.addStretch(1)
         scroll.setWidget(form_host)
@@ -347,8 +376,8 @@ class LaunchPanel(QWidget):
         preview_layout = QVBoxLayout(preview_box)
         self.preview = QPlainTextEdit()
         self.preview.setReadOnly(True)
-        self.preview.setMaximumHeight(110)
-        self.preview.setMinimumHeight(54)
+        self.preview.setMaximumHeight(84)
+        self.preview.setMinimumHeight(46)
         self.preview.setFont(self.font())
         self.command_text = ''
         copy_button = QPushButton('Copy command')
@@ -402,6 +431,21 @@ class LaunchPanel(QWidget):
         self.refresh_leftovers()
 
     # --------------------------------------------------------------- building --
+    def _collapsible(self, box, expanded=True):
+        """Make a group foldable by clicking its title (saves height on a laptop)."""
+        box.setCheckable(True)
+        box.setChecked(expanded)
+        box.setToolTip('click the title to fold this group')
+        self._group_children[box] = [w for w in box.findChildren(QWidget)
+                                     if w.parent() is box]
+        for child in self._group_children[box]:
+            child.setVisible(expanded)
+        box.toggled.connect(lambda on, b=box: self._toggle_group(b, on))
+
+    def _toggle_group(self, box, expanded):
+        for child in self._group_children.get(box, []):
+            child.setVisible(bool(expanded))
+
     def _add(self, layout, name, label, widget, launch=False, tip=''):
         if tip:
             widget.setToolTip(tip)
@@ -586,18 +630,7 @@ class LaunchPanel(QWidget):
             return
         self._update_preview()
         if self._running:
-            needed = self.restart_fields()
-            if needed:
-                self.badge.setText('restart needed: ' + ', '.join(needed[:4])
-                                   + ('…' if len(needed) > 4 else ''))
-                self.badge.setObjectName('badge')
-                self.restart_button.setEnabled(True)
-            else:
-                self.badge.setText('running')
-                self.badge.setObjectName('badgeOk')
-                self.restart_button.setEnabled(False)
-            self.badge.style().unpolish(self.badge)
-            self.badge.style().polish(self.badge)
+            self._update_restart_state()
         if self.detector.isChecked() and not self.cameras.isChecked():
             self.cameras.setToolTip('The detector switches the camera on by itself.')
         self._update_detector_hint()
@@ -610,9 +643,25 @@ class LaunchPanel(QWidget):
             'Runs vacuum_vision/detector.launch.py as its own process')
 
     def restart_fields(self):
-        current = self.config().to_dict()
-        return [FIELD_LABELS.get(name, name) for name in LAUNCH_TIME_FIELDS
-                if current.get(name) != self._applied.get(name)]
+        names = restart_fields(self.config().to_dict(), self._applied)
+        return [FIELD_LABELS.get(name, name) for name in names]
+
+    def _update_restart_state(self):
+        """One place decides the badge and the Apply & restart button."""
+        needed = self.restart_fields() if self._running else []
+        if needed:
+            self.badge.setText('restart needed: ' + ', '.join(needed[:4])
+                               + ('…' if len(needed) > 4 else ''))
+            self.badge.setObjectName('badge')
+            self.badge.setToolTip('these options are fixed at launch: ' + ', '.join(needed))
+            self.restart_button.setEnabled(True)
+        else:
+            self.badge.setText('running' if self._running else 'not running')
+            self.badge.setObjectName('badgeOk')
+            self.badge.setToolTip('')
+            self.restart_button.setEnabled(False)
+        self.badge.style().unpolish(self.badge)
+        self.badge.style().polish(self.badge)
 
     def set_running(self, running, applied=None):
         self._running = bool(running)
@@ -623,16 +672,7 @@ class LaunchPanel(QWidget):
         self.start_button.setEnabled(not running)
         self.stop_button.setEnabled(running)
         self.state_dot.set_state('ok' if running else 'unknown')
-        if not running:
-            self.badge.setText('not running')
-            self.badge.setObjectName('badgeOk')
-            self.restart_button.setEnabled(False)
-        else:
-            self.badge.setText('running')
-            self.badge.setObjectName('badgeOk')
-            self.restart_button.setEnabled(bool(self.restart_fields()))
-        self.badge.style().unpolish(self.badge)
-        self.badge.style().polish(self.badge)
+        self._update_restart_state()
         self._update_preview()
 
     def _start(self):

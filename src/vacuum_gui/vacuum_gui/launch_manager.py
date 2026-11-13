@@ -93,6 +93,7 @@ class Leftover:
     pid: int
     name: str
     cmdline: str
+    session: int = 0
 
 
 class ManagedProcess:
@@ -296,11 +297,21 @@ def _read_cmdline(pid):
     return [p.decode('utf-8', 'replace') for p in raw.split(b'\0') if p]
 
 
+def _read_session(pid):
+    """Session id of a process (zeros when it cannot be read)."""
+    try:
+        with open('/proc/%d/stat' % pid) as f:
+            fields = f.read().rsplit(')', 1)[-1].split()
+        return int(fields[3])
+    except (OSError, IndexError, ValueError):
+        return 0
+
+
 def _classify(argv):
     joined = ' '.join(argv)
     base = os.path.basename(argv[0]) if argv else ''
-    if base in ('gz', 'gz-sim'):
-        if 'sim' in argv or base == 'gz-sim':
+    if base in ('gz', 'gz-sim', 'gz sim'):
+        if 'sim' in argv or base != 'gz':
             return 'gz sim'
     if base == 'ruby' and ('gz' in joined or 'sim' in joined):
         return 'ruby'
@@ -316,8 +327,13 @@ def _classify(argv):
     return None
 
 
-def find_leftovers(exclude_pids=(), only=None):
-    """Processes that look like a running stack, excluding ``exclude_pids``."""
+def find_leftovers(exclude_pids=(), only=None, session=None):
+    """Processes that look like a running stack, excluding ``exclude_pids``.
+
+    ``session`` restricts the result to one session (process group leader), which is how
+    the panel recognises processes that escaped the launch's own group: they are ours, so
+    they can be killed without asking.
+    """
     exclude = set(int(p) for p in exclude_pids if p)
     exclude.add(os.getpid())
     found = []
@@ -337,7 +353,10 @@ def find_leftovers(exclude_pids=(), only=None):
         kind = _classify(argv)
         if kind is None or (only and kind not in only):
             continue
-        found.append(Leftover(pid, kind, ' '.join(argv)[:300]))
+        sid = _read_session(pid)
+        if session is not None and sid != int(session):
+            continue
+        found.append(Leftover(pid, kind, ' '.join(argv)[:300], sid))
     return sorted(found, key=lambda x: x.pid)
 
 

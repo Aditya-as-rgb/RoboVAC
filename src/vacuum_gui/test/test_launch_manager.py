@@ -132,7 +132,7 @@ def test_classify_recognises_stack_processes():
 
 def test_find_leftovers_excludes_the_given_pids():
     proc = launch_manager.ManagedProcess(
-        'fake_gz', ['sh', '-c', 'exec -a "gz sim" sleep 30'], launch_manager.LogBus())
+        'fake_gz', ['bash', '-c', 'exec -a "gz sim" sleep 30'], launch_manager.LogBus())
     proc.start()
     time.sleep(0.3)
     # the child's argv[0] is "gz sim", which the classifier sees as a Gazebo server
@@ -140,6 +140,21 @@ def test_find_leftovers_excludes_the_given_pids():
     assert any(item.pid == proc.pid for item in found_all) or True
     found_none = launch_manager.find_leftovers(exclude_pids=[proc.pid], only=('gz sim',))
     assert all(item.pid != proc.pid for item in found_none)
+    proc.stop(int_wait=1.0, term_wait=1.0)
+
+
+def test_leftovers_can_be_limited_to_one_session():
+    """A process that escaped the launch group is still recognised as ours."""
+    proc = launch_manager.ManagedProcess(
+        'fake_gz', ['bash', '-c', 'exec -a "gz sim" sleep 30'], launch_manager.LogBus())
+    proc.start()
+    time.sleep(0.3)
+    sid = os.getsid(proc.pid)
+    assert sid == proc.pgid
+    ours = launch_manager.find_leftovers(session=sid)
+    assert [item.pid for item in ours] == [proc.pid]
+    assert ours[0].session == sid
+    assert launch_manager.find_leftovers(session=sid + 1000000) == []
     proc.stop(int_wait=1.0, term_wait=1.0)
 
 

@@ -441,38 +441,42 @@ cd src/vacuum_gui && python3 -m pytest test -q     # 64 tests, no ROS and no dis
   dashboard and health;
 - against a real headless stack (`vacuum_bringup vacuum.launch.py headless:=true`) the panel
   received the 99×98 occupancy grid, `map -> base_footprint` pose, `/scan`, `/clock` with a
-  ~0.94 real-time factor, Nav2 lifecycle states and a fully green health panel.
+  ~0.94 real-time factor, Nav2 lifecycle states and a fully green health panel;
+- **Start and Stop from the panel itself**: pressing Start built the command, passed the
+  pre-flight checks, launched the stack (`sim` pid), the panel then received the 100×98 map,
+  the spawn pose and the scan with the health panel fully green, and Stop took the whole
+  tree down with no `gz`/bridge/Nav2/RViz process left behind;
+- the pre-flight "Kill leftovers and re-check" path: a stale `gz sim` from an old test
+  blocked the start, the button reaped it, the checks went green and the start proceeded.
 
 **Not verified yet - check these on the machine with a GPU/display:**
 
-1. **Start / Stop from the panel.** The last end-to-end attempt never launched the sim because
-   a pre-flight modal was open in the test harness; the launch that the panel builds is the one
-   verified above, but the button path itself needs one run. If Start does nothing, the `sim`
-   tab in **Log** has the reason.
-2. **Mission services.** Press *Plan* then *Start cleaning* with the coverage switch on; expect
+1. **Mission services.** Press *Plan* then *Start cleaning* with the coverage switch on; expect
    `/coverage/plan_markers` to draw the wall loops and lanes and `/coverage/status` to narrate.
    *Stop* and *Reset meter* should answer through the same path.
-3. **A Nav2 goal from the map.** Click in "Nav2 goal" mode; the robot must drive, `/plan` must
+2. **A Nav2 goal from the map.** Click in "Nav2 goal" mode; the robot must drive, `/plan` must
    draw, and the action state should go `navigating → succeeded`.
-4. **Camera panels.** Start with the camera on (`cameras:=true`) and check `/camera/image` and
+3. **Camera panels.** Start with the camera on (`cameras:=true`) and check `/camera/image` and
    `/dirt/debug_image` frame rates; the boxes only appear while the detector is running and
    publishing.
-5. **Detector tuning.** Change `conf` in **Tools** and confirm with
+4. **Detector tuning.** Change `conf` in **Tools** and confirm with
    `ros2 param get /dirt_detector conf`.
-6. **Recording, packaging, rosbag, GIF.** Start recording during a mission, check the episode
+5. **Recording, packaging, rosbag, GIF.** Start recording during a mission, check the episode
    folder grows, then package it. The GIF export needs Pillow (`python3-pil`).
-7. **E-stop.** While a mission runs, press `Space`: the mission must stop and `/cmd_vel` must
+6. **E-stop.** While a mission runs, press `Space`: the mission must stop and `/cmd_vel` must
    stay zero until released (`ros2 topic echo /cmd_vel`).
-8. **Wayland.** The panel works on native Wayland in principle; `--xcb` (or
+7. **Wayland.** The panel works on native Wayland in principle; `--xcb` (or
    `ui.qt_platform: "xcb"` in `settings.json`) is the fallback if the Qt Wayland plugin
    misbehaves. The Gazebo and RViz windows the panel launches already go through XWayland.
 
 **Known issues / punch list**
 
-- A forced stop can leave one `ros_gz_bridge` behind (seen once). A leftover bridge publishes a
-  **second `/clock`**, and that breaks AMCL (`Detected jump back in time`, no `map -> odom`)
-  for the next run. `Kill leftovers` exists for exactly this; the stop path should also reap
-  the bridge group, and the pre-flight check now lists bridges and Nav2 leftovers.
+- A leftover `ros_gz_bridge` publishes a **second `/clock`**, and that breaks AMCL
+  (`Detected jump back in time`, no `map -> odom`) for the next run. Stop now kills anything
+  that escaped the launch's process group but still carries its session id, and the
+  pre-flight dialog offers **Kill leftovers and re-check**. A process from a *different*
+  session is still only reported, not killed - that is deliberate, but it is the thing to
+  check first if a start is blocked.
 - `false_recleans` in the experiment table is a proxy, not ground truth (see the Experiments
   row). A real measure needs per-pass dirt counts in `summary.json`.
 - The Stack panel is scrollable but tight at 950 px window height; collapsing the dirt and
