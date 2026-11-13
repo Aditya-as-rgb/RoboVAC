@@ -100,6 +100,31 @@ def test_stop_escalates_to_sigkill_when_signals_are_ignored():
     assert not proc.running
 
 
+def test_stop_reaps_a_child_that_escaped_the_process_group():
+    """A child that starts its own session must not survive a stop of its parent.
+
+    This is the `ros_gz_bridge` case: it is still a child of the launch, so it is in the
+    ppid tree, but a killpg() of the launch's group does not reach it.
+    """
+    bus = launch_manager.LogBus()
+    script = ('import subprocess, sys, time\n'
+              'child = subprocess.Popen(["/bin/sleep", "60"], start_new_session=True)\n'
+              'print(child.pid, flush=True)\n'
+              'time.sleep(60)\n')
+    proc = launch_manager.ManagedProcess('tree', [sys.executable, '-c', script], bus)
+    proc.start()
+    assert wait_until(lambda: any(l[2] == 'stdout' and l[3].strip().isdigit()
+                                 for l in bus.lines()))
+    child_pid = int([l for l in bus.lines()
+                     if l[2] == 'stdout' and l[3].strip().isdigit()][0][3])
+    tree = launch_manager.process_tree(proc.pid)
+    assert child_pid in tree, 'the child should still be in the ppid tree'
+    assert launch_manager._read_session(child_pid) != proc.pgid, 'expected its own session'
+    proc.stop(int_wait=1.0, term_wait=1.0)
+    assert wait_until(lambda: not is_alive(child_pid), timeout=5.0)
+    assert 'reaped' in bus.text()
+
+
 def test_manager_tracks_named_processes_and_stops_them_all():
     manager = launch_manager.ProcessManager()
     assert manager.start('a', ['sh', '-c', 'sleep 60'])

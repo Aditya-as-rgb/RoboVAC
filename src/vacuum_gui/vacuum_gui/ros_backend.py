@@ -118,7 +118,12 @@ def image_to_frame(msg, kind, max_width=MAX_IMAGE_WIDTH):
 
 
 class GuiNode(Node):
-    """Thin ROS node; the backend owns it and reads its buffers."""
+    """Thin ROS node; the backend owns it and reads its buffers.
+
+    Every callback goes through :meth:`RosBackend._guarded`: an exception in one
+    subscription must not stop the executor (rclpy lets it propagate out of spin(), which
+    would kill the whole panel backend - exactly what an rclpy API mismatch did once).
+    """
 
     def __init__(self, backend):
         super().__init__('vacuum_gui')
@@ -126,48 +131,55 @@ class GuiNode(Node):
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
+        def sub(msg_type, topic, callback, qos):
+            return self.create_subscription(msg_type, topic,
+                                            backend._guarded(topic, callback), qos)
+
         self.subscriptions_ = [
-            self.create_subscription(OccupancyGrid, 'map', self.backend.on_map, LATCHED),
-            self.create_subscription(OccupancyGrid, 'coverage_map',
+            sub(OccupancyGrid, 'map', self.backend.on_map, LATCHED),
+            sub(OccupancyGrid, 'coverage_map',
                                      self.backend.on_coverage, LATCHED),
-            self.create_subscription(OccupancyGrid, 'global_costmap/costmap',
+            sub(OccupancyGrid, 'global_costmap/costmap',
                                      self.backend.on_global_costmap, LATCHED),
-            self.create_subscription(OccupancyGrid, 'local_costmap/costmap',
+            sub(OccupancyGrid, 'local_costmap/costmap',
                                      self.backend.on_local_costmap, LATCHED),
-            self.create_subscription(Image, 'camera/image', self.backend.on_camera, SENSOR),
-            self.create_subscription(Image, 'dirt/debug_image', self.backend.on_debug, SENSOR),
-            self.create_subscription(LaserScan, 'scan', self.backend.on_scan, SENSOR),
-            self.create_subscription(Odometry, 'odom', self.backend.on_odom, 20),
+            sub(Image, 'camera/image', self.backend.on_camera, SENSOR),
+            sub(Image, 'dirt/debug_image', self.backend.on_debug, SENSOR),
+            sub(LaserScan, 'scan', self.backend.on_scan, SENSOR),
+            sub(Odometry, 'odom', self.backend.on_odom, 20),
             # AMCL publishes /amcl_pose TRANSIENT_LOCAL (once, then on updates): a
             # volatile subscription is incompatible and silently receives nothing.
-            self.create_subscription(PoseWithCovarianceStamped, 'amcl_pose',
+            sub(PoseWithCovarianceStamped, 'amcl_pose',
                                      self.backend.on_amcl_pose, LATCHED),
-            self.create_subscription(Path, 'plan', self.backend.on_global_plan, 10),
-            self.create_subscription(Path, 'local_plan', self.backend.on_local_plan, 10),
-            self.create_subscription(MarkerArray, 'coverage/plan_markers',
+            sub(Path, 'plan', self.backend.on_global_plan, 10),
+            sub(Path, 'local_plan', self.backend.on_local_plan, 10),
+            sub(MarkerArray, 'coverage/plan_markers',
                                      self.backend.on_coverage_markers, LATCHED),
-            self.create_subscription(MarkerArray, 'dirt/markers',
+            sub(MarkerArray, 'dirt/markers',
                                      self.backend.on_dirt_markers, LATCHED),
-            self.create_subscription(MarkerArray, 'dirt/detected_markers',
+            sub(MarkerArray, 'dirt/detected_markers',
                                      self.backend.on_detected_markers, LATCHED),
-            self.create_subscription(String, 'dirt/detections',
+            sub(String, 'dirt/detections',
                                      self.backend.on_detections, LATCHED),
-            self.create_subscription(Float32, 'coverage/percent',
+            sub(Float32, 'coverage/percent',
                                      self.backend.on_coverage_pct, 10),
-            self.create_subscription(Float32, 'coverage/percent_free',
+            sub(Float32, 'coverage/percent_free',
                                      self.backend.on_coverage_free_pct, 10),
-            self.create_subscription(String, 'coverage/status',
+            sub(String, 'coverage/status',
                                      self.backend.on_mission_status, LATCHED),
-            self.create_subscription(Int32, 'dirt/remaining', self.backend.on_dirt_remaining, 10),
-            self.create_subscription(Int32, 'dirt/total', self.backend.on_dirt_total, LATCHED),
-            self.create_subscription(PoseArray, 'particle_cloud', self.backend.on_particles, 10),
-            self.create_subscription(Joy, 'joy', self.backend.on_joy, 10),
-            self.create_subscription(Clock, 'clock', self.backend.on_clock, 10),
-            self.create_subscription(TFMessage, 'tf', self.backend.on_tf, 100),
+            sub(Int32, 'dirt/remaining', self.backend.on_dirt_remaining, 10),
+            sub(Int32, 'dirt/total', self.backend.on_dirt_total, LATCHED),
+            sub(PoseArray, 'particle_cloud', self.backend.on_particles, 10),
+            sub(Joy, 'joy', self.backend.on_joy, 10),
+            sub(Clock, 'clock', self.backend.on_clock, 10),
+            sub(TFMessage, 'tf', self.backend.on_tf, 100),
         ]
-        self.pose_timer = self.create_timer(0.1, self.backend.tick)
-        self.slow_timer = self.create_timer(0.5, self.backend.slow_tick)
-        self.command_timer = self.create_timer(0.02, self.backend.drain_commands)
+        self.pose_timer = self.create_timer(
+            0.1, self.backend._guarded_timer('tick', self.backend.tick))
+        self.slow_timer = self.create_timer(
+            0.5, self.backend._guarded_timer('slow_tick', self.backend.slow_tick))
+        self.command_timer = self.create_timer(
+            0.02, self.backend._guarded_timer('commands', self.backend.drain_commands))
 
 
 class RosBackend(RobotBackend):
@@ -221,6 +233,9 @@ class RosBackend(RobotBackend):
         self._life_clients = {}
         self._param_client = None
         self._param_busy = False
+        self._last_param_poll = 0.0
+        self._param_sent = 0.0
+        self._reported_errors = set()
         self._action_state = 'idle'
 
     # ------------------------------------------------------------- lifecycle --
@@ -297,6 +312,33 @@ class RosBackend(RobotBackend):
         for name in ('controller_server', 'planner_server', 'bt_navigator', 'amcl', 'map_server'):
             self._life_clients[name] = node.create_client(GetState, '/%s/get_state' % name)
         self._param_client = AsyncParameterClient(node, '/dirt_detector')
+
+    # ---------------------------------------------------------------- guards ---
+    def _report_callback_error(self, name, exc):
+        """One notice per distinct failure, so a 10 Hz callback cannot flood the log."""
+        key = (str(name), type(exc).__name__, str(exc))
+        if key in self._reported_errors:
+            return
+        if len(self._reported_errors) > 200:
+            self._reported_errors.clear()
+        self._reported_errors.add(key)
+        self.notice.emit('error', 'ROS callback %s failed: %s' % (name, exc))
+
+    def _guarded(self, name, fn):
+        def wrapped(msg):
+            try:
+                fn(msg)
+            except Exception as exc:      # noqa: BLE001 - never let one callback kill spin
+                self._report_callback_error(name, exc)
+        return wrapped
+
+    def _guarded_timer(self, name, fn):
+        def wrapped():
+            try:
+                fn()
+            except Exception as exc:      # noqa: BLE001
+                self._report_callback_error(name, exc)
+        return wrapped
 
     # -------------------------------------------------------------- callbacks --
     def _throttled(self, key, hz):
@@ -706,18 +748,28 @@ class RosBackend(RobotBackend):
             pass
 
     def _poll_detector_params(self):
-        if not self._node or self._param_client is None or self._param_busy:
+        if not self._node or self._param_client is None:
             return
         if not self._expect.get('detector'):
             return
-        if not self._param_client.service_is_ready():
+        now = time.monotonic()
+        if self._param_busy:
+            # A request issued before the detector's services existed can hang forever;
+            # time it out instead of blocking every later poll (which is what happened
+            # when the panel first ran against Jazzy's AsyncParameterClient).
+            if now - self._param_sent <= 3.0:
+                return
+            self._param_busy = False
+        if now - self._last_param_poll < 2.0:
             return
+        self._last_param_poll = now
         self._param_busy = True
+        self._param_sent = now
         names = ['conf', 'iou', 'max_range', 'min_hits', 'clear_misses']
         try:
             future = self._param_client.get_parameters(names)
             future.add_done_callback(self._param_done)
-        except Exception:      # noqa: BLE001
+        except Exception:      # noqa: BLE001 - no service yet, retry on the next tick
             self._param_busy = False
 
     def _param_done(self, future):
@@ -727,7 +779,8 @@ class RosBackend(RobotBackend):
             data = {}
             for name, value in zip(('conf', 'iou', 'max_range', 'min_hits', 'clear_misses'),
                                    values):
-                data[name] = value.double_value if value.type_ == value.PARAMETER_DOUBLE \
+                # rcl_interfaces/ParameterType: 2 = INTEGER, 3 = DOUBLE
+                data[name] = value.double_value if int(value.type) == 3 \
                     else value.integer_value
             if data and data != self._detector_params:
                 self._detector_params = data
@@ -882,7 +935,7 @@ class RosBackend(RobotBackend):
 
     def set_detector_params(self, values):
         def do():
-            if not self._param_client or not self._param_client.service_is_ready():
+            if self._param_client is None:
                 self.notice.emit('error', 'dirt detector is not running')
                 return
             from rcl_interfaces.msg import Parameter as ParameterMsg
@@ -902,8 +955,18 @@ class RosBackend(RobotBackend):
                 params.append(msg)
             try:
                 future = self._param_client.set_parameters(params)
-                future.add_done_callback(
-                    lambda f: self.notice.emit('info', 'detector parameters applied'))
+
+                def applied(f):
+                    try:
+                        results = f.result().results
+                        bad = [p.name for p, r in zip(params, results) if not r.successful]
+                        self.notice.emit('warn' if bad else 'info',
+                                         'detector parameters: ' +
+                                         ('rejected ' + ', '.join(bad) if bad
+                                          else 'applied'))
+                    except Exception as exc:      # noqa: BLE001
+                        self.notice.emit('error', 'parameter set failed: %s' % exc)
+                future.add_done_callback(applied)
                 self._detector_params.update(values)
                 self.detector_params_received.emit(dict(self._detector_params))
             except Exception as exc:      # noqa: BLE001
@@ -911,4 +974,4 @@ class RosBackend(RobotBackend):
         self._post(do)
 
     def request_detector_params(self):
-        self._post(lambda: setattr(self, '_param_busy', False))
+        self._post(self._begin_param_poll)

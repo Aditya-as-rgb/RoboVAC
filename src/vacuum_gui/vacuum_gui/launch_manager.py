@@ -196,6 +196,9 @@ class ManagedProcess:
         proc = self.proc
         if proc is None or not self.running:
             return 'gone'
+        # snapshot the descendants first: a child that called setsid() is not in the
+        # process group we are about to signal, and would otherwise survive the stop
+        tree = process_tree(proc.pid)
         self._stop_requested = True
         for sig, wait, label in ((signal.SIGINT, int_wait, 'sigint'),
                                  (signal.SIGTERM, term_wait, 'sigterm'),
@@ -204,10 +207,15 @@ class ManagedProcess:
                 self.stop_signal = label
             try:
                 proc.wait(timeout=wait)
-                return label
+                break
             except subprocess.TimeoutExpired:
                 continue
-        return 'sigkill'
+        alive = [pid for pid in tree if os.path.exists('/proc/%d' % pid)]
+        if alive:
+            _kill_pids(alive)
+            self.log.add(self.name, 'stop', 'reaped %d escaped child(ren): %s'
+                         % (len(alive), ', '.join(str(p) for p in alive)))
+        return label
 
 
 class ProcessManager:
@@ -297,14 +305,78 @@ def _read_cmdline(pid):
     return [p.decode('utf-8', 'replace') for p in raw.split(b'\0') if p]
 
 
-def _read_session(pid):
-    """Session id of a process (zeros when it cannot be read)."""
+def _stat_fields(pid):
+    """(ppid, pgrp, session) of a process, or None when /proc is unreadable."""
     try:
         with open('/proc/%d/stat' % pid) as f:
             fields = f.read().rsplit(')', 1)[-1].split()
-        return int(fields[3])
+        return int(fields[1]), int(fields[2]), int(fields[3])
     except (OSError, IndexError, ValueError):
-        return 0
+        return None
+
+
+def _read_session(pid):
+    """Session id of a process (zeros when it cannot be read)."""
+    fields = _stat_fields(pid)
+    return fields[2] if fields else 0
+
+
+def process_tree(root_pid):
+    """Every live descendant of ``root_pid``.
+
+    A child that calls setsid() escapes the process group the panel signals, and
+    `ros2 launch` itself is started in its own session; walking the ppid chain catches
+    those. Returns pids in breadth-first order, root excluded.
+    """
+    if not root_pid:
+        return []
+    children = {}
+    for entry in os.listdir('/proc'):
+        if not entry.isdigit():
+            continue
+        pid = int(entry)
+        fields = _stat_fields(pid)
+        if fields is None:
+            continue
+        children.setdefault(fields[0], []).append(pid)
+    found, stack = [], [int(root_pid)]
+    while stack:
+        parent = stack.pop(0)
+        for child in children.get(parent, []):
+            if child not in found:
+                found.append(child)
+                stack.append(child)
+    return found
+
+
+def _kill_pids(pids, wait=2.0):
+    """SIGTERM then SIGKILL a list of pids; returns what was done per pid."""
+    results = {}
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+            results[pid] = 'sigterm'
+        except ProcessLookupError:
+            results[pid] = 'gone'
+    deadline = time.time() + wait
+    while time.time() < deadline:
+        if all(not os.path.exists('/proc/%d' % pid) or results.get(pid) == 'gone'
+               for pid in results):
+            break
+        time.sleep(0.1)
+    for pid, how in list(results.items()):
+        if how == 'gone':
+            continue
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            continue
+        try:
+            os.kill(pid, signal.SIGKILL)
+            results[pid] = 'sigkill'
+        except ProcessLookupError:
+            pass
+    return results
 
 
 def _classify(argv):
