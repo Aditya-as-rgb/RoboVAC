@@ -30,7 +30,29 @@ by Maker's Pet / KAIA.AI (Apache-2.0) — see [NOTICE](NOTICE).
 | `tools/dirt_dataset` | dataset batch runner, train/val/test packager, Colab training notebook |
 | `models/dirt_detector` | trained detector (`.pt` + `.onnx`) |
 
-## Install
+## Quickstart (fresh clone)
+
+```bash
+git clone https://github.com/Aditya-as-rgb/RoboVAC.git vacuum_sim
+cd vacuum_sim
+./bootstrap.sh             # rosdep install + Python extras + colcon build
+./bootstrap.sh --desktop   # same, and add the control panel to the app menu
+source /opt/ros/jazzy/setup.zsh && source install/setup.zsh
+ros2 launch vacuum_bringup vacuum.launch.py      # sim + Nav2 + RViz + coverage
+```
+
+`bootstrap.sh` is idempotent: it sources `/opt/ros/<distro>`, runs `rosdep install` over
+the declared dependencies, installs the three Python extras the ROS side needs
+(`onnxruntime`, `numpy<2`, `PySide6`) into the system interpreter only if they are missing,
+then builds. It does **not** install ROS itself — with no `/opt/ros/jazzy` it points at the
+install page and stops. Flags: `--desktop`, `--no-build`, `--no-pip`;
+`ROS_DISTRO=humble ./bootstrap.sh` for another distro.
+
+Tested on Ubuntu 24.04 + ROS 2 Jazzy, native (no Docker). The directory name does not
+matter — nothing hardcodes it. Below, `<ws>` means the clone's root, i.e. the folder that
+contains `src/`.
+
+## Install (manual, if you skip bootstrap.sh)
 
 ```bash
 sudo apt install -y ros-jazzy-desktop ros-jazzy-ros-gz ros-jazzy-navigation2 \
@@ -46,10 +68,10 @@ sudo apt install -y ros-jazzy-desktop ros-jazzy-ros-gz ros-jazzy-navigation2 \
 Ultralytics is only needed to train (in Colab, `tools/dirt_dataset/train_dirt_yolo.ipynb`),
 never on the robot.
 
-## Build
+## Build (manual)
 
 ```bash
-cd ~/vacuum_sim                       # the folder containing src/
+cd <ws>                               # the folder containing src/
 source /opt/ros/jazzy/setup.zsh       # bash users: setup.bash, here and below
 rosdep install --from-paths src --ignore-src -r -y
 colcon build --symlink-install
@@ -68,7 +90,7 @@ current shell. `scripts/` paths are relative to the workspace root.
 | Full stack: sim + AMCL + Nav2 + RViz + gamepad + coverage | `ros2 launch vacuum_bringup vacuum.launch.py` |
 | ...and clean immediately | `ros2 launch vacuum_bringup vacuum.launch.py autostart:=true` |
 | SLAM: map while driving, no saved map | `ros2 launch vacuum_bringup vacuum.launch.py slam:=true` |
-| Saved map | `ros2 launch vacuum_bringup vacuum.launch.py map:=$HOME/vacuum_sim/maps/living_room.yaml` |
+| Saved map | `ros2 launch vacuum_bringup vacuum.launch.py map:=<ws>/maps/living_room.yaml` |
 | Headless (no Gazebo/RViz windows) | `ros2 launch vacuum_bringup vacuum.launch.py headless:=true rviz:=false` |
 | Keyboard instead of gamepad | `ros2 launch vacuum_bringup vacuum.launch.py teleop:=none` |
 | No coverage/meter (pure nav) | `ros2 launch vacuum_bringup vacuum.launch.py coverage:=false meter:=false` |
@@ -82,7 +104,7 @@ current shell. `scripts/` paths are relative to the workspace root.
 |---|---|
 | Gazebo + robot | `ros2 launch vacuum_gazebo sim.launch.py` |
 | SLAM + Nav2 + RViz | `ros2 launch vacuum_bringup navigation.launch.py` |
-| ...on a saved map instead | `ros2 launch vacuum_bringup navigation.launch.py slam:=false map:=$HOME/vacuum_sim/maps/living_room.yaml` |
+| ...on a saved map instead | `ros2 launch vacuum_bringup navigation.launch.py slam:=false map:=<ws>/maps/living_room.yaml` |
 | Drive (keyboard) | `ros2 run teleop_twist_keyboard teleop_twist_keyboard` |
 | Drive (gamepad) | `ros2 launch vacuum_teleop teleop_joy.launch.py` |
 | Coverage mission | `ros2 launch vacuum_coverage coverage.launch.py` (+ `autostart:=true`) |
@@ -116,6 +138,8 @@ python3 tools/dirt_dataset/package_dataset.py ~/vacuum_runs/dataset \
 
 python3 -m pytest src/vacuum_coverage/test src/vacuum_gazebo/test \
                   src/vacuum_vision/test src/vacuum_gui/test -q          # 242 tests, no ROS
+# ...with /usr/bin/python3 if a venv shadows python3 on PATH; the GUI tests pick an
+# offscreen Qt platform by themselves, so no display is needed.
 python3 src/vacuum_gazebo/scripts/dirt_world.py --help                  # preview dirt layout
 cd src/vacuum_coverage && python3 -m vacuum_coverage.preview \
     --map ../vacuum_gazebo/maps/living_room.yaml --out plan.png --simulate
@@ -128,7 +152,7 @@ cd src/vacuum_coverage && python3 -m vacuum_coverage.preview \
 | Argument | Default | Meaning |
 |---|---|---|
 | `slam` | `False` | `True` = SLAM instead of AMCL on a saved map |
-| `map` | `vacuum_gazebo/maps/living_room.yaml` | map for AMCL, the meter and the planner |
+| `map` | `<ws>/maps/living_room.yaml` | map for AMCL, the meter and the planner; falls back to the copy inside `vacuum_gazebo/maps` |
 | `world`, `x_pose`, `y_pose` | `living_room.world`, `-2.0`, `-0.5` | Gazebo world and spawn pose |
 | `odom_source` | `ground_truth` | or `robot_wheels` (drifts, for realism) |
 | `headless`, `rviz` | `false`, `true` | windows on/off |
@@ -341,6 +365,12 @@ retune the Nav2 footprint/inflation in `navigation.yaml`.
 - **`source install/setup.bash` fails under `set -u`** — wrap it: `set +u; source ...; set -u`.
 - **Wayland** — Gazebo/RViz go through XWayland (`qt_platform:=xcb`, the default); the panel
   has `--xcb` as a fallback.
+- **`vacuum_gui` exits with "PySide6 is not installed"** — install it into the interpreter
+  that has `rclpy` (`/usr/bin/python3 -m pip install --user --break-system-packages PySide6`);
+  a venv's pip installs it where the ROS nodes cannot see it.
+- **`ros2 launch ... --show-args` shows a map path you did not expect** — the `map` default is
+  `<ws>/maps/living_room.yaml` when that file exists, otherwise `vacuum_gazebo/maps`. Delete
+  or pass `map:=` if the saved map is stale.
 
 ## Roadmap
 
@@ -353,8 +383,17 @@ Done in simulation; the list below is what is left, mostly for hardware.
    into `summary.json`; the seeded batch (three ways × N seeds) still has to be run.
 3. **Stop on signal loss.** gz DiffDrive keeps the last `/cmd_vel`; plan is `twist_mux` with
    the joystick on a high-priority input, Nav2 low, ~0.5 s timeout.
-4. **Navigation default map path.** `navigation.launch.py` still defaults to
-   `vacuum_gazebo/maps`; `save_map.sh` already writes `<workspace>/maps`.
-5. **More worlds.** A room generator so planner and detector are not tuned to one living room.
-6. **Own robot description.** Replace `vacuum_description`, retune footprint and inflation,
+4. **More worlds.** A room generator so planner and detector are not tuned to one living room.
+5. **Own robot description.** Replace `vacuum_description`, retune footprint and inflation,
    then move to the STM32 + RPLidar hardware backend behind `vacuum_gui/backend.py`.
+
+## Files the code writes
+
+Nothing is written into the repository at runtime except maps, which are meant to be kept.
+
+| Path | Contents |
+|---|---|
+| `<ws>/maps/` | `save_map.sh` output; the launch files and the panel read here first |
+| `~/vacuum_runs/` | run reports, dirt ground truth, datasets, bags, screenshots, experiments |
+| `~/.config/vacuum_gui/` | panel settings, presets, dock layout |
+| `~/.local/bin/`, `~/.local/share/applications/` | desktop launcher written by `vacuum_gui_install_desktop` |

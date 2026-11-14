@@ -19,8 +19,16 @@ import os
 import signal
 import sys
 
-from PySide6.QtCore import QTimer, Qt
-from PySide6.QtWidgets import QApplication, QMessageBox
+try:
+    from PySide6.QtCore import QTimer, Qt
+    from PySide6.QtWidgets import QApplication, QMessageBox
+except ImportError as exc:  # pragma: no cover - depends on the machine
+    sys.stderr.write(
+        'vacuum_gui: PySide6 is not installed for this Python (%s).\n'
+        'Install it into the system Python that rclpy uses, then run again:\n'
+        '  /usr/bin/python3 -m pip install --user --break-system-packages PySide6\n'
+        % sys.executable)
+    raise SystemExit(1)
 
 
 def _qt_platform(args, ui_settings):

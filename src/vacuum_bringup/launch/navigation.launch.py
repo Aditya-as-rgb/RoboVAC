@@ -12,13 +12,30 @@ import os
 import tempfile
 
 import yaml
-from ament_index_python.packages import get_package_share_directory
+from ament_index_python.packages import get_package_prefix, get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+
+
+def default_map(gazebo_share, name='living_room.yaml'):
+    """``<ws>/maps/<name>`` when it exists, else the map shipped inside vacuum_gazebo.
+
+    ``save_map.sh`` writes into ``<workspace>/maps`` and the control panel reads it there,
+    so a clone that saves a map and then launches with no ``map:=`` gets the saved one. A
+    workspace built elsewhere (or a map that was deleted) falls back to the shipped map.
+    """
+    try:
+        ws = os.path.dirname(os.path.dirname(get_package_prefix('vacuum_gazebo')))
+        candidate = os.path.join(ws, 'maps', name)
+        if os.path.isfile(candidate):
+            return candidate
+    except Exception:                                  # noqa: BLE001 - launch must not fail
+        pass
+    return os.path.join(gazebo_share, 'maps', name)
 
 
 def rewrite_initial_pose(params_path, x, y):
@@ -89,7 +106,7 @@ def generate_launch_description():
                         'False: localize on `map` with AMCL.'),
         DeclareLaunchArgument(
             'map',
-            default_value=os.path.join(gazebo_share, 'maps', 'living_room.yaml'),
+            default_value=default_map(gazebo_share),
             description='Map yaml, used only when slam:=False'),
         DeclareLaunchArgument(
             'params_file',
