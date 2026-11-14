@@ -44,14 +44,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: ros-tooling/setup-ros@v0.7
-        with:
-          required-ros-distributions: jazzy
+      - name: Add the ROS 2 apt repository
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y curl gnupg lsb-release
+          curl -fsSL --retry 5 --retry-delay 5 https://raw.githubusercontent.com/ros/rosdistro/master/ros.key | sudo tee /usr/share/keyrings/ros-archive-keyring.gpg > /dev/null
+          codename="$(. /etc/os-release && echo "$UBUNTU_CODENAME")"
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $codename main" | sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null
+          sudo apt-get update
+          sudo apt-get install -y ros-jazzy-ros-base ros-dev-tools
 
       - name: Install declared dependencies
         run: |
           source /opt/ros/jazzy/setup.bash
-          sudo apt-get install -y python3-colcon-common-extensions
           sudo rosdep init || true
           rosdep update
           rosdep install --from-paths src --ignore-src -r -y
