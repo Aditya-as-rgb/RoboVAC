@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import paths
-from .launch_manager import find_leftovers, port_free
+from .launch_manager import BLOCKING_KINDS, find_leftovers
 
 ERROR, WARN, INFO = 'error', 'warn', 'info'
 
@@ -39,6 +39,7 @@ class Check:
     detail: str = ''
     hint: str = ''
     level: str = ERROR
+    modal: bool = True      # False: mention it in the status bar, never in a dialog
 
     @property
     def state(self):
@@ -60,12 +61,13 @@ def _packages_in(ws):
 def check_ros_environment():
     if not os.environ.get('AMENT_PREFIX_PATH'):
         return Check('ROS environment', False, 'AMENT_PREFIX_PATH is empty',
-                     'source /opt/ros/jazzy/setup.zsh and then install/setup.zsh '
-                     'before starting the GUI (the .desktop launcher does it for you)')
+                     'source /opt/ros/jazzy/%s and then install/%s '
+                     'before starting the GUI (the .desktop launcher does it for you)'
+                     % (paths.shell_setup_name(), paths.shell_setup_name()))
     if not shutil.which('ros2'):
         return Check('ROS environment', False, 'ros2 not on PATH',
-                     'source /opt/ros/jazzy/setup.zsh; if it is a venv shell, run the GUI '
-                     'with PATH=/usr/bin:/bin:$PATH')
+                     'source /opt/ros/jazzy/%s; if it is a venv shell, run the GUI '
+                     'with PATH=/usr/bin:/bin:$PATH' % paths.shell_setup_name())
     return Check('ROS environment', True, 'ROS_DISTRO=%s' % os.environ.get('ROS_DISTRO', '?'))
 
 
@@ -77,7 +79,8 @@ def check_packages(ws=None):
     missing = [p for p in wanted if p not in found]
     if missing:
         return Check('Workspace packages', False, 'missing: ' + ', '.join(missing),
-                     'cd %s && colcon build --symlink-install && source install/setup.zsh' % ws)
+                     'cd %s && colcon build --symlink-install && source install/%s'
+                     % (ws, paths.shell_setup_name()))
     if 'vacuum_gui' not in found:
         return Check('Workspace packages', True, 'all sim packages found (vacuum_gui not '
                                                  'installed yet - running from source)',
@@ -102,7 +105,8 @@ def check_python_deps():
     if problems:
         return Check('Python dependencies', False, '; '.join(problems),
                      '/usr/bin/python3 -m pip install --user --break-system-packages '
-                     'PySide6 onnxruntime "numpy<2"  (then source /opt/ros/jazzy/setup.zsh)')
+                     'PySide6 onnxruntime "numpy<2"  (then source /opt/ros/jazzy/%s)'
+                     % paths.shell_setup_name())
     return Check('Python dependencies', True, 'numpy, onnxruntime, PySide6, rclpy importable')
 
 
@@ -170,28 +174,31 @@ def check_gamepad(cfg):
         return Check('Gamepad', True, 'found ' + ', '.join(devices))
     return Check('Gamepad', False, 'no /dev/input/js* device',
                  'pair the pad (or use the on-screen teleop pad in the Robot tab); '
-                 'check with: ros2 run joy joy_enumerate_devices', level=WARN)
+                 'check with: ros2 run joy joy_enumerate_devices', level=WARN,
+                     modal=False)
 
 
 def check_leftovers():
-    left = find_leftovers()
+    left = find_leftovers(only=BLOCKING_KINDS)
     if not left:
-        return Check('Stale processes', True, 'no leftover gz / bridge / Nav2 / RViz')
+        return Check('Stale processes', True, 'no leftover gz / ros_gz_bridge')
     pids = ', '.join('%s (pid %d)' % (l.name, l.pid) for l in left[:4])
     hint = ('a previous run is still alive: a second gz cannot start on one world, and a '
             'leftover ros_gz_bridge publishes a second /clock which makes AMCL lose the '
-            'TF chain. Use "Kill leftovers".')
+            'TF chain. Use "Kill leftovers". If this gz belongs to another project, close '
+            'that one first.')
     return Check('Stale processes', False, '%d process(es): %s' % (len(left), pids), hint)
 
 
-def check_ports(check=True):
-    if not check:
-        return Check('Ports', True, 'skipped', level=INFO)
-    busy = [p for p in (11345,) if not port_free(p)]
-    if busy:
-        return Check('Ports', False, 'TCP %s busy' % ', '.join(str(p) for p in busy),
-                     'another Gazebo is probably running; kill leftovers first')
-    return Check('Ports', True, 'gz transport port 11345 free')
+def check_other_ros():
+    """rviz2 / Nav2 / rosbag2 outside this panel: reported, never blocking, never killed."""
+    others = [l for l in find_leftovers() if l.name not in BLOCKING_KINDS]
+    if not others:
+        return Check('Other ROS processes', True, 'none', level=INFO)
+    names = ', '.join(sorted({l.name for l in others}))
+    return Check('Other ROS processes', True,
+                 '%s running (left alone: may belong to another project)' % names,
+                 level=INFO)
 
 
 def check_writable(path, label):
@@ -216,7 +223,7 @@ def check_dataset_tools(ws=None):
                  'pull it or skip packaging', level=WARN)
 
 
-def run_checks(cfg, ws=None, check_port=True, gamepad=True):
+def run_checks(cfg, ws=None, gamepad=True):
     """All checks, in the order the panel shows them."""
     ws = ws or paths.workspace_root()
     checks = [
@@ -229,7 +236,7 @@ def run_checks(cfg, ws=None, check_port=True, gamepad=True):
         check_detector_model(cfg, ws),
         check_camera(cfg),
         check_leftovers(),
-        check_ports(check_port),
+        check_other_ros(),
         check_writable(cfg.dirt_path(), 'Dirt folder'),
         check_writable(cfg.dataset_path(), 'Dataset folder'),
         check_dataset_tools(ws),

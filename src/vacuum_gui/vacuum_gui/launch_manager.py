@@ -295,6 +295,12 @@ class ProcessManager:
 
 LEFTOVER_KINDS = ('gz sim', 'ruby', 'rviz2', 'ros_gz_bridge', 'nav2', 'rosbag2')
 
+# The kinds that actually make the next start fail: a second gz on one world, a second
+# /clock from a stray bridge. rviz2, Nav2 servers and rosbag2 may belong to another
+# project on the same machine, so they are reported but never block a start and are
+# never killed unless they carry the session id of a launch this panel started.
+BLOCKING_KINDS = ('gz sim', 'ruby', 'ros_gz_bridge')
+
 
 def _read_cmdline(pid):
     try:

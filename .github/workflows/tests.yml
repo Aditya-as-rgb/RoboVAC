@@ -1,0 +1,81 @@
+name: tests
+
+# Two checks so a clone keeps working for someone else:
+#   tests  - the 242 ROS-free unit tests on a bare Python, no ROS, no display
+#   build  - rosdep + colcon build of all 7 packages, and the launch files parse
+# Both run on the same Ubuntu release the project targets (24.04).
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Qt runtime libraries for the offscreen widgets
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libxkbcommon0 fontconfig
+
+      - name: Install the test-only dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "numpy<2" pyyaml matplotlib pillow PySide6 pytest
+
+      - name: Unit tests (no ROS, no display)
+        run: |
+          python -m pytest src/vacuum_coverage/test src/vacuum_gazebo/test \
+                           src/vacuum_vision/test src/vacuum_gui/test -q
+
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ros-tooling/setup-ros@v0.7
+        with:
+          required-ros-distributions: jazzy
+
+      - name: Install declared dependencies
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          sudo apt-get install -y python3-colcon-common-extensions
+          sudo rosdep init || true
+          rosdep update
+          rosdep install --from-paths src --ignore-src -r -y
+
+      - name: colcon build
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          colcon build --symlink-install --event-handlers console_cohesion+
+
+      - name: The launch files parse and resolve their defaults
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          source install/setup.bash
+          for f in vacuum_bringup/vacuum.launch.py vacuum_bringup/navigation.launch.py \
+                   vacuum_gazebo/sim.launch.py vacuum_coverage/coverage.launch.py \
+                   vacuum_vision/detector.launch.py vacuum_teleop/teleop_joy.launch.py \
+                   vacuum_gui/gui.launch.py; do
+            echo "== $f"
+            ros2 launch "${f%%/*}" "${f#*/}" --show-args > /dev/null
+          done
+
+      - name: The map default is the workspace copy, not the packaged one
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          source install/setup.bash
+          ros2 launch vacuum_bringup vacuum.launch.py --show-args \
+            | grep -q "default: '$PWD/maps/living_room.yaml'"

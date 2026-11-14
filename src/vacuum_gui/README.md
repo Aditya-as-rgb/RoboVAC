@@ -143,6 +143,10 @@ says so instead of failing silently.
 
 ```
 app.py         QApplication, theme, backend selection, window
+theme.py       8 colour themes + System, QSS built from one palette
+feedback.py    press flash + busy (spinner) state for buttons
+toast.py       floating result cards (spinner -> tick/cross)
+background.py  run a blocking call off the GUI thread
 main_window.py docks, orchestration (start/stop/restart, live toggles, e-stop), shortcuts
 backend.py     RobotBackend signals + NullBackend (the only interface panels know)
 ros_backend.py rclpy node in its own thread, MultiThreadedExecutor, throttled signals
@@ -203,3 +207,14 @@ Gazebo here**; the checklist for those is in the repository README under
 `vacuum_gui: status, and what is left to do`.
 
 `python3 -m pytest test -q` runs 66 tests.
+
+## Themes and button feedback
+
+* Pick a theme from the **Theme** drop-down at the right of the toolbar (System, Graphite,
+  Midnight, Nord, Dracula, Mocha, High contrast, Daylight, Solarized light). It applies at
+  once and is remembered. `vacuum_gui --theme nord` overrides it for one run.
+* Every button flashes when clicked. Slow actions (Start/Stop stack, Plan, Start cleaning,
+  Save map...) turn the button into a spinner with a verb, show a toast card, and finish with a
+  green or red ring plus a toast with the outcome - no need to watch the terminal.
+* Settings: `ui.preflight_warnings=false` (or the "don't ask again" box) skips the
+  warnings-only pre-flight dialog.

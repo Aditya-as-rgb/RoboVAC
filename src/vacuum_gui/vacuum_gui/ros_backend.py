@@ -923,15 +923,29 @@ class RosBackend(RobotBackend):
         def do():
             client = self._trigger_clients.get(service)
             if client is None:
+                self.trigger_done.emit(service, False, 'ROS is not connected yet')
                 return
             if not client.service_is_ready():
-                self.notice.emit('error', 'service %s is not available yet' % service)
+                text = ('service %s is not available yet - is the mission/meter running '
+                        '(Stack tab: Mission + meter)?' % service)
+                self.notice.emit('error', text)
+                self.trigger_done.emit(service, False, text)
                 return
             future = client.call_async(Trigger.Request())
-            future.add_done_callback(
-                lambda f: self.notice.emit('info', '%s: %s' % (
-                    service, (f.result().message if f.result() else 'no reply'))))
+            future.add_done_callback(lambda f, name=service: self._trigger_reply(name, f))
         self._post(do)
+
+    def _trigger_reply(self, service, future):
+        """Runs on the rclpy thread; the signal hops to the GUI thread by itself."""
+        try:
+            result = future.result()
+        except Exception as exc:      # noqa: BLE001 - the service call itself failed
+            self.trigger_done.emit(service, False, 'call failed: %s' % exc)
+            return
+        if result is None:
+            self.trigger_done.emit(service, False, 'no reply')
+            return
+        self.trigger_done.emit(service, bool(result.success), str(result.message or ''))
 
     def set_detector_params(self, values):
         def do():

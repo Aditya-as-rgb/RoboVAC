@@ -51,6 +51,12 @@ def workspace_root(start=None):
     return Path.cwd()
 
 
+def shell_setup_name():
+    """``setup.zsh`` for zsh users, ``setup.bash`` otherwise (used in fix hints)."""
+    shell = os.path.basename(os.environ.get('SHELL', '') or 'bash')
+    return 'setup.zsh' if shell == 'zsh' else 'setup.bash'
+
+
 def install_share(pkg, ws=None):
     """Installed share directory of a workspace package (may not exist)."""
     ws = Path(ws or workspace_root())

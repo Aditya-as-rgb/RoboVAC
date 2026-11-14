@@ -33,7 +33,7 @@ def test_load_merges_partial_files_and_ignores_unknown_keys(tmp_path):
                                 'stack': {'dirt': 7, 'headless': 'false'},
                                 'nonsense': 1}))
     data = settings.load(path)
-    assert data['ui']['theme'] == 'dark'
+    assert data['ui']['theme'] == 'graphite'   # legacy 'dark' is migrated
     assert data['ui']['help_seen'] is False           # untouched default survives
     assert data['stack']['dirt'] == 7 and data['stack']['headless'] is False
     assert 'nonsense' not in data

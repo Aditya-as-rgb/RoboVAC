@@ -19,8 +19,16 @@ import os
 import signal
 import sys
 
-from PySide6.QtCore import QTimer, Qt
-from PySide6.QtWidgets import QApplication, QMessageBox
+try:
+    from PySide6.QtCore import QTimer, Qt
+    from PySide6.QtWidgets import QApplication, QMessageBox
+except ImportError as exc:  # pragma: no cover - depends on the machine
+    sys.stderr.write(
+        'vacuum_gui: PySide6 is not installed for this Python (%s).\n'
+        'Install it into the system Python that rclpy uses, then run again:\n'
+        '  /usr/bin/python3 -m pip install --user --break-system-packages PySide6\n'
+        % sys.executable)
+    raise SystemExit(1)
 
 
 def _qt_platform(args, ui_settings):
@@ -50,8 +58,10 @@ def build_parser():
         description='Control panel for the RoboVAC ROS 2 simulation.')
     parser.add_argument('--xcb', action='store_true',
                         help='force Qt through XWayland (QT_QPA_PLATFORM=xcb)')
-    parser.add_argument('--theme', choices=['system', 'dark', 'light'],
-                        help='override the stored theme for this run')
+    parser.add_argument('--theme', metavar='NAME',
+                        help='override the stored theme for this run (system, graphite, '
+                             'midnight, nord, dracula, mocha, high-contrast, daylight, '
+                             'solarized-light)')
     parser.add_argument('--no-ros', action='store_true',
                         help='open the window without starting the ROS backend')
     parser.add_argument('--offscreen', action='store_true',
@@ -87,6 +97,9 @@ def main(argv=None):
     applied = theme.apply(app, mode)
     theme.connect_system_theme(
         app, lambda: theme.apply(app, data.get('ui', {}).get('theme', 'system')))
+    from .feedback import PressFeedback
+    press_feedback = PressFeedback(app)       # flashes a button when it is clicked
+    app.installEventFilter(press_feedback)
 
     backend = None
     no_ros = args.no_ros or os.environ.get('VACUUM_GUI_NO_ROS', 'false') == 'true'
@@ -106,9 +119,12 @@ def main(argv=None):
 
     from .main_window import MainWindow
     window = MainWindow(app, data, backend)
+    # a --theme override is shown in the drop-down (but not saved)
+    window.theme_combo.setCurrentIndex(
+        max(0, window.theme_combo.findData(theme.normalize(mode))))
     window.showMaximized() if not args.offscreen else window.show()
-    if applied != mode:
-        window.statusBar().showMessage('theme: %s (desktop)' % applied, 4000)
+    if theme.normalize(mode) == theme.SYSTEM:
+        window.statusBar().showMessage('theme: %s (follows the desktop)' % applied, 4000)
 
     if args.screenshot:
         def snap():
