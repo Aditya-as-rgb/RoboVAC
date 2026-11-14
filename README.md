@@ -91,7 +91,7 @@ current shell. `scripts/` paths are relative to the workspace root.
 |---|---|
 | Full stack: sim + AMCL + Nav2 + RViz + gamepad + coverage | `ros2 launch vacuum_bringup vacuum.launch.py` |
 | ...and clean immediately | `ros2 launch vacuum_bringup vacuum.launch.py autostart:=true` |
-| SLAM: map while driving, no saved map | `ros2 launch vacuum_bringup vacuum.launch.py slam:=true` |
+| SLAM: map while driving, no saved map | `ros2 launch vacuum_bringup vacuum.launch.py slam:=True` |
 | Saved map | `ros2 launch vacuum_bringup vacuum.launch.py map:=<ws>/maps/living_room.yaml` |
 | Headless (no Gazebo/RViz windows) | `ros2 launch vacuum_bringup vacuum.launch.py headless:=true rviz:=false` |
 | Keyboard instead of gamepad | `ros2 launch vacuum_bringup vacuum.launch.py teleop:=none` |
@@ -106,7 +106,7 @@ current shell. `scripts/` paths are relative to the workspace root.
 |---|---|
 | Gazebo + robot | `ros2 launch vacuum_gazebo sim.launch.py` |
 | SLAM + Nav2 + RViz | `ros2 launch vacuum_bringup navigation.launch.py` |
-| ...on a saved map instead | `ros2 launch vacuum_bringup navigation.launch.py slam:=false map:=<ws>/maps/living_room.yaml` |
+| ...on a saved map instead | `ros2 launch vacuum_bringup navigation.launch.py slam:=False map:=<ws>/maps/living_room.yaml` |
 | Drive (keyboard) | `ros2 run teleop_twist_keyboard teleop_twist_keyboard` |
 | Drive (gamepad) | `ros2 launch vacuum_teleop teleop_joy.launch.py` |
 | Coverage mission | `ros2 launch vacuum_coverage coverage.launch.py` (+ `autostart:=true`) |
@@ -158,7 +158,7 @@ Those tests are what CI runs on every push (`.github/workflows/tests.yml`): a ba
 
 | Argument | Default | Meaning |
 |---|---|---|
-| `slam` | `False` | `True` = SLAM instead of AMCL on a saved map |
+| `slam` | `False` | `True` = SLAM instead of AMCL on a saved map (**capitalised** — the launch files declare `choices=['True','False']`; `slam:=true` is rejected) |
 | `map` | `<ws>/maps/living_room.yaml` | map for AMCL, the meter and the planner; falls back to the copy inside `vacuum_gazebo/maps` |
 | `world`, `x_pose`, `y_pose` | `living_room.world`, `-2.0`, `-0.5` | Gazebo world and spawn pose |
 | `odom_source` | `ground_truth` | or `robot_wheels` (drifts, for realism) |
@@ -199,7 +199,7 @@ simulation itself, so there is never a second Gazebo.
 ## Coverage and the re-clean loop
 
 `vacuum_coverage` plans on the saved map's occupancy grid and drives the plan with Nav2, so
-use it with AMCL (`slam:=false`), not while the map is still moving.
+use it with AMCL (`slam:=False`), not while the map is still moving.
 
 ![coverage plan](docs/coverage_plan.png)
 
