@@ -1,5 +1,7 @@
 # vacuum_sim
 
+[![tests](https://github.com/Aditya-as-rgb/RoboVAC/actions/workflows/tests.yml/badge.svg)](https://github.com/Aditya-as-rgb/RoboVAC/actions/workflows/tests.yml)
+
 ROS 2 **Jazzy** + Gazebo (gz-sim) simulation of a round robot vacuum: SLAM, Nav2, teleop,
 bumpers, coverage cleaning with a run report, simulated dirt, and a vision model that finds
 dirt on the floor and sends the robot back to it. Native Ubuntu 24.04, no Docker, no `kaiaai`
@@ -144,6 +146,11 @@ python3 src/vacuum_gazebo/scripts/dirt_world.py --help                  # previe
 cd src/vacuum_coverage && python3 -m vacuum_coverage.preview \
     --map ../vacuum_gazebo/maps/living_room.yaml --out plan.png --simulate
 ```
+
+Those tests are what CI runs on every push (`.github/workflows/tests.yml`): a bare
+`ubuntu-24.04` Python with no ROS for the 242 tests, plus a second job that does the full
+`rosdep install` + `colcon build` and checks that all seven launch files parse and that
+`map` still defaults to `<ws>/maps/living_room.yaml`. The badge at the top is that workflow.
 
 ## Launch modes reference
 
