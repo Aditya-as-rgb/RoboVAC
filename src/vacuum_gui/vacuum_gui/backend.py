@@ -60,6 +60,7 @@ class RobotBackend(QObject):
     detector_params_received = Signal(dict)
     action_state_received = Signal(str)      # 'idle'|'navigating'|'succeeded'|'failed'
     notice = Signal(str, str)                # level ('info'|'warn'|'error'), text
+    trigger_done = Signal(str, bool, str)    # service, ok, message: answer to call_trigger
 
     capabilities = frozenset(ALL_CAPABILITIES)
 
@@ -99,7 +100,12 @@ class RobotBackend(QObject):
         pass
 
     def call_trigger(self, service):
-        """``service`` is one of 'plan' | 'start' | 'stop' | 'reset_meter'."""
+        """``service`` is one of 'plan' | 'start' | 'stop' | 'reset_meter'.
+
+        Every call must be answered with ``trigger_done(service, ok, message)`` - also when
+        it cannot be sent - so the panel can show the person what happened.
+        """
+        self.trigger_done.emit(service, False, self.reason())
 
     def set_detector_params(self, values):
         pass

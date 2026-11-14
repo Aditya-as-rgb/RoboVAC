@@ -35,7 +35,8 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox,
                                QSizePolicy, QSplitter, QTabWidget, QTextBrowser, QToolBar,
                                QVBoxLayout, QWidget)
 
-from . import paths, preflight, settings, theme
+from . import feedback, paths, preflight, settings, theme
+from .background import Background
 from .backend import NullBackend
 from .camera_view import CameraPanel
 from .commands import StackConfig, shell_join
@@ -44,13 +45,14 @@ from .dataset_panel import DatasetPanel
 from .dirt_inspector import DirtInspector
 from .experiments_panel import ExperimentsPanel
 from .health_panel import HealthPanel
-from .launch_manager import ProcessManager, find_leftovers, kill_leftovers
+from .launch_manager import BLOCKING_KINDS, ProcessManager, find_leftovers, kill_leftovers
 from .launch_panel import LaunchPanel, PreflightDialog
 from .log_console import LogConsole
 from .map_view import MapPanel
 from .mission_panel import MissionPanel
 from .reports_panel import ReportsPanel
 from .teleop_panel import TeleopPanel
+from .toast import ToastManager
 from .tools_panel import ToolsPanel
 from .ui_common import hint
 
@@ -143,10 +145,23 @@ class MainWindow(QMainWindow):
         self._gif_path = None
         self._last_mission_text = ''
         self._map_click_mode = self.view_settings.get('map_mode', 'goal')
+        self._launched_camera = False       # was the camera in the URDF of this launch?
+        self._starting = False              # Start pressed, stack not ready yet
+        self._start_toast = None
+        self._start_t0 = 0.0
+        self._last_dash = None
+        self._stop_toast = None
+        self._close_after_stop = False
+        self._pending = {}                  # mission service -> (toast, button, watchdog)
 
         self.setWindowTitle('RoboVAC control panel')
         self.setObjectName('vacuum_gui')
         self.resize(1500, 950)
+        self.bg = Background(self)          # blocking work off the GUI thread
+        self.toasts = ToastManager(self)    # visible answer to every action
+        self._startup_timer = QTimer(self)
+        self._startup_timer.setInterval(1000)
+        self._startup_timer.timeout.connect(self._startup_tick)
 
         self._build_center()
         self._build_docks()
@@ -364,9 +379,9 @@ class MainWindow(QMainWindow):
         bar.addWidget(self.estop_button)
         bar.addSeparator()
         self.action_plan = QAction('Plan', self)
-        self.action_plan.triggered.connect(lambda: self.backend.call_trigger('plan'))
+        self.action_plan.triggered.connect(lambda: self.run_trigger('plan'))
         self.action_clean = QAction('Start cleaning', self)
-        self.action_clean.triggered.connect(lambda: self.backend.call_trigger('start'))
+        self.action_clean.triggered.connect(lambda: self.run_trigger('start'))
         self.action_stop_mission = QAction('Stop cleaning', self)
         self.action_stop_mission.triggered.connect(self.stop_mission)
         for action in (self.action_plan, self.action_clean, self.action_stop_mission):
@@ -378,12 +393,18 @@ class MainWindow(QMainWindow):
         self.action_shot.triggered.connect(lambda: self.take_screenshot('map'))
         bar.addAction(self.action_shot)
 
-        theme_button = QPushButton()
-        theme_button.setFlat(True)
-        theme_button.setText('Theme')
-        theme_button.setToolTip('Follow the desktop, or force dark/light')
-        theme_button.clicked.connect(self.cycle_theme)
-        bar.addWidget(theme_button)
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        bar.addWidget(spacer)
+        bar.addWidget(QLabel('Theme '))
+        self.theme_combo = QComboBox()
+        self.theme_combo.setToolTip('Colour theme - applies immediately and is remembered')
+        for key, label in theme.theme_choices():
+            self.theme_combo.addItem(label, key)
+        stored = theme.normalize(self.settings.get('ui', {}).get('theme'))
+        self.theme_combo.setCurrentIndex(max(0, self.theme_combo.findData(stored)))
+        self.theme_combo.activated.connect(self._theme_chosen)
+        bar.addWidget(self.theme_combo)
 
         help_button = QPushButton('Help')
         help_button.setFlat(True)
@@ -412,10 +433,10 @@ class MainWindow(QMainWindow):
         p.open_gazebo_requested.connect(self.open_gazebo_gui)
 
         m = self.mission_panel
-        m.plan_requested.connect(lambda: self.backend.call_trigger('plan'))
-        m.start_requested.connect(lambda: self.backend.call_trigger('start'))
+        m.plan_requested.connect(lambda: self.run_trigger('plan'))
+        m.start_requested.connect(lambda: self.run_trigger('start'))
         m.stop_requested.connect(self.stop_mission)
-        m.reset_meter_requested.connect(lambda: self.backend.call_trigger('reset_meter'))
+        m.reset_meter_requested.connect(lambda: self.run_trigger('reset_meter'))
         m.save_map_requested.connect(self.save_map)
         m.load_map_requested.connect(self._load_map_path)
         m.reclean_toggled.connect(self._reclean_toggled)
@@ -457,6 +478,7 @@ class MainWindow(QMainWindow):
         b.mission_status_received.connect(self.mission_panel.set_status)
         b.detector_params_received.connect(self.tools_panel.set_values)
         b.notice.connect(self._notice)
+        b.trigger_done.connect(self._trigger_done)
 
     def _build_shortcuts(self):
         def shortcut(sequence, slot, app_wide=False):
@@ -467,8 +489,8 @@ class MainWindow(QMainWindow):
             return sc
 
         shortcut('F5', self._toggle_stack)
-        shortcut('Ctrl+P', lambda: self.backend.call_trigger('plan'))
-        shortcut('Ctrl+Return', lambda: self.backend.call_trigger('start'))
+        shortcut('Ctrl+P', lambda: self.run_trigger('plan'))
+        shortcut('Ctrl+Return', lambda: self.run_trigger('start'))
         shortcut('Ctrl+.', self.stop_mission)
         shortcut('Ctrl+M', self.map_panel.view.fit)
         shortcut('Ctrl+Shift+K', self.do_kill_leftovers)
@@ -477,8 +499,19 @@ class MainWindow(QMainWindow):
 
     # --------------------------------------------------------------- actions ---
     def start_stack(self, cfg):
-        if self._stack_running:
+        if self._stack_running or self._starting:
             return
+        # Instant feedback: the button turns into a spinner before any check or dialog.
+        self.launch_panel.set_starting('Checking')
+        started = False
+        try:
+            started = self._start_stack(cfg)
+        finally:
+            if not started:
+                self.launch_panel.clear_starting()
+
+    def _start_stack(self, cfg):
+        """Pre-flight, then spawn ``ros2 launch``. True when the launch process started."""
         checks = preflight.run_checks(cfg)
         if preflight.blocking(checks):
             dialog = PreflightDialog(checks, self,
@@ -490,40 +523,108 @@ class MainWindow(QMainWindow):
             if blocked:
                 self._notice('error', 'start blocked by %d pre-flight check(s): %s'
                              % (len(blocked), ', '.join(c.name for c in blocked)))
-                return
-        warnings = [c for c in checks if not c.ok]
+                return False
+        # rows that only deserve a line (no gamepad paired, ...) never open a dialog
+        for check in checks:
+            if not check.ok and not check.modal:
+                self.toasts.show('%s: %s' % (check.name, check.detail), 'warn')
+        warnings = [c for c in checks if not c.ok and c.modal]
         if warnings:
-            dialog = QMessageBox(self)
-            dialog.setWindowTitle('Pre-flight warnings')
-            dialog.setText('%d check(s) would like attention before starting.'
-                           % len(warnings))
-            dialog.setInformativeText('\n'.join('%s: %s' % (c.name, c.detail)
-                                                for c in warnings[:6]))
-            dialog.setStandardButtons(QMessageBox.StandardButton.Ok |
-                                      QMessageBox.StandardButton.Cancel)
-            if dialog.exec() != QMessageBox.StandardButton.Ok:
-                return
+            if self.settings.get('ui', {}).get('preflight_warnings', True):
+                dialog = QMessageBox(self)
+                dialog.setWindowTitle('Pre-flight warnings')
+                dialog.setText('%d check(s) would like attention before starting.'
+                               % len(warnings))
+                dialog.setInformativeText('\n'.join('%s: %s' % (c.name, c.detail)
+                                                    for c in warnings[:6]))
+                dialog.setStandardButtons(QMessageBox.StandardButton.Ok |
+                                          QMessageBox.StandardButton.Cancel)
+                again = QCheckBox("Don't ask about warnings again (they still show as notices)")
+                dialog.setCheckBox(again)
+                answer = dialog.exec()
+                if again.isChecked():
+                    self.settings.setdefault('ui', {})['preflight_warnings'] = False
+                if answer != QMessageBox.StandardButton.Ok:
+                    return False
+            else:
+                for check in warnings[:4]:
+                    self.toasts.show('%s: %s' % (check.name, check.detail), 'warn')
         self.cfg = cfg
         self.settings['stack'] = cfg.to_dict()
-        settings.save(self.settings)
+        try:
+            settings.save(self.settings)
+        except OSError:
+            pass
         env = self.manager.env()
         if cfg.qt_platform:
             env['QT_QPA_PLATFORM'] = cfg.qt_platform
         ok = self.manager.start('sim', cfg.stack_command(str(paths.default_map())), env=env,
                                 on_exit=self._sim_exited)
         if not ok:
+            self.toasts.show('Could not start ros2 launch - see the Log tab', 'error')
             QMessageBox.critical(self, 'Could not start',
                                  'ros2 launch did not start. See the Log tab.')
-            return
+            return False
+        self._launched_camera = cfg.camera_needed
         self._stack_running = True
         self._stopping = False
+        self._last_dash = None
         self.launch_panel.set_running(True, cfg)
         self._set_actions_running(True)
         self._expectations_from_config(cfg)
         self.view_settings['map_mode'] = self._map_click_mode
         self.experiments_panel.apply_base_config(cfg)
-        self._notice('info', 'stack started')
+        # the button keeps spinning and a card tracks the stage until Nav2 is up
+        self._starting = True
+        self._start_t0 = time.monotonic()
+        self._start_toast = self.toasts.busy('Starting stack: launching Gazebo and Nav2…')
+        self.launch_panel.set_start_stage('Launching')
+        self._startup_timer.start()
         QTimer.singleShot(1500, lambda: self._start_live_parts(cfg))
+        return True
+
+    def _startup_tick(self):
+        """1 Hz while the stack comes up: stage text on the button and the card."""
+        if not self._starting:
+            self._startup_timer.stop()
+            return
+        elapsed = time.monotonic() - self._start_t0
+        if not self.backend.available():
+            if elapsed >= 6.0:
+                self._finish_starting(
+                    True, 'Stack launched. This panel has no ROS link, so readiness is '
+                          'not tracked.')
+            return
+        dash = self._last_dash
+        nav_up = bool(dash and dash.nav2_state in ('active', 'partially active'))
+        sim_up = bool(dash and dash.sim_time and dash.sim_time > 0)
+        if nav_up:
+            self._finish_starting(True, 'Stack ready: Gazebo and Nav2 are up (%.0f s)' % elapsed)
+        elif elapsed > 150.0:
+            self._finish_starting(False, 'Still not ready after 2.5 min - open the Log tab '
+                                         'and check the sim process')
+        else:
+            stage = 'Waiting for Nav2' if sim_up else 'Launching Gazebo'
+            self.launch_panel.set_start_stage(stage)
+            self.toasts.update(self._start_toast,
+                               'Starting stack: %s… (%d s)' % (stage.lower(), elapsed))
+
+    def _finish_starting(self, ok, text):
+        self._starting = False
+        self._startup_timer.stop()
+        self.launch_panel.clear_starting('ok' if ok else 'fail')
+        self.toasts.finish(self._start_toast, text, 'ok' if ok else 'warn')
+        self._start_toast = None
+
+    def _cancel_starting(self):
+        """Stop / exit while still starting: drop the spinner without a verdict."""
+        if not self._starting:
+            return
+        self._starting = False
+        self._startup_timer.stop()
+        self.launch_panel.clear_starting()
+        self.toasts.close(self._start_toast)
+        self._start_toast = None
 
     def _start_live_parts(self, cfg):
         if not self._stack_running:
@@ -540,35 +641,58 @@ class MainWindow(QMainWindow):
             self.rviz_toggle(True)
 
     def restart_stack(self, cfg):
-        self._notice('info', 'restarting the stack (this takes a few seconds)')
         self.stop_stack(then_start=cfg)
 
+    LIVE_PARTS = ('rosbag', 'dataset', 'coverage', 'detector', 'teleop', 'rviz')
+
     def stop_stack(self, checked=False, then_start=None):
+        if self._stopping:
+            return
         if not self._stack_running and not self.manager.running_names():
             if then_start is not None:
                 self.start_stack(then_start)
             return
+        self._cancel_starting()
         self._stopping = True
         self._set_actions_running(False)
-        self._notice('info', 'stopping…')
         self.teleop_panel.stop_all()
-        for name in ('rosbag', 'dataset', 'coverage', 'detector', 'teleop', 'rviz'):
-            if self.manager.running(name):
-                self.manager.stop(name, int_wait=6.0, term_wait=3.0)
+        self.launch_panel.set_stopping('Stopping')
+        self._stop_toast = self.toasts.busy(
+            'Restarting: stopping the running stack first…' if then_start is not None
+            else 'Stopping stack… (a few seconds)')
         sim = self.manager.get('sim')
-        sim_session = sim.pgid if sim is not None else None
+        session = sim.pgid if sim is not None else None
+        # the signal waits can take many seconds: never on the GUI thread
+        self.bg.run(lambda: self._stop_processes(session),
+                    lambda killed, error: self._stop_finished(killed, error, then_start),
+                    name='stop-stack')
+
+    def _stop_processes(self, sim_session):
+        """Blocking: stop every managed process. Worker thread only - no widgets in here."""
+        threads = []
+        for name in self.LIVE_PARTS:
+            if self.manager.running(name):
+                thread = threading.Thread(target=self.manager.stop, args=(name,),
+                                          kwargs={'int_wait': 6.0, 'term_wait': 3.0},
+                                          daemon=True)
+                thread.start()
+                threads.append(thread)
+        for thread in threads:      # the mission first, so nothing sends goals as Nav2 dies
+            thread.join()
         self.manager.stop('sim', int_wait=10.0, term_wait=5.0)
         self.manager.wait_dead(timeout=8.0)
         # Anything left with the launch's session id came from our tree but escaped its
         # process group (a gz bridge re-execs, for example). It is ours: kill it without
-        # asking, then report what survived.
+        # asking.
         ours = find_leftovers(session=sim_session) if sim_session else []
         if ours:
             kill_leftovers(ours)
-            self._notice('warn', 'killed %d process(es) that escaped the launch group'
-                         % len(ours))
+        return len(ours)
+
+    def _stop_finished(self, killed, error, then_start):
         self._stack_running = False
         self._stopping = False
+        self.launch_panel.clear_stopping('fail' if error else 'ok')
         self.launch_panel.set_running(False)
         self.mission_panel.set_running(False)
         self.dataset_panel.set_recording(False)
@@ -577,54 +701,75 @@ class MainWindow(QMainWindow):
         self.camera_panel.set_reason('stack stopped')
         self.map_panel.view.clear_trail()
         self.launch_panel.refresh_leftovers()
-        leftovers = find_leftovers()
-        if leftovers:
-            self._notice('warn', '%d leftover process(es) from an earlier run' % len(leftovers))
-            self.prompt_kill_leftovers(leftovers)
+        leftovers = find_leftovers(only=BLOCKING_KINDS)
+        if error is not None:
+            self.toasts.finish(self._stop_toast, 'Stopping failed: %s' % error, 'error')
+        elif killed:
+            self.toasts.finish(self._stop_toast, 'Stack stopped; killed %d process(es) that '
+                                                 'escaped the launch group' % killed, 'warn')
+        elif leftovers:
+            self.toasts.finish(self._stop_toast, 'Stack stopped, but %d leftover gz/bridge '
+                                                 'process(es) remain' % len(leftovers), 'warn')
         else:
-            self._notice('info', 'stopped cleanly, no leftovers')
+            self.toasts.finish(self._stop_toast, 'Stack stopped cleanly', 'ok')
+        self._stop_toast = None
+        if leftovers:
+            self.prompt_kill_leftovers(leftovers)
         if then_start is not None:
             QTimer.singleShot(500, lambda: self.start_stack(then_start))
+        if self._close_after_stop:
+            self._close_after_stop = False
+            self.close()
 
     def _kill_stale_now(self):
         """Used by the pre-flight dialog: reap every stack process and wait for it."""
         self.manager.stop_all(int_wait=5.0, term_wait=3.0)
-        leftovers = find_leftovers()
+        leftovers = find_leftovers(only=BLOCKING_KINDS)
         if leftovers:
             kill_leftovers(leftovers, wait=4.0)
         self.manager.wait_dead(timeout=6.0)
         self.launch_panel.refresh_leftovers()
 
     def prompt_kill_leftovers(self, leftovers=None):
-        leftovers = leftovers or find_leftovers()
+        leftovers = leftovers or find_leftovers(only=BLOCKING_KINDS)
         if not leftovers:
-            self._notice('info', 'no leftovers')
+            self.toasts.show('No leftover gz / bridge processes', 'ok')
             return
         names = '\n'.join('%s (pid %d) %s' % (l.name, l.pid, l.cmdline[:90])
                           for l in leftovers[:8])
         answer = QMessageBox.question(
             self, 'Leftover processes',
-            '%d process(es) from a previous run are still alive:\n\n%s\n\nKill them?'
+            '%d Gazebo / bridge process(es) are still alive:\n\n%s\n\nKill them? '
+            '(If one belongs to another project, answer No and close that one yourself.)'
             % (len(leftovers), names))
         if answer == QMessageBox.StandardButton.Yes:
             result = kill_leftovers(leftovers)
-            self._notice('info', 'killed leftovers: %s' % result)
+            self.toasts.show('Killed %d leftover process(es)' % len(result), 'ok')
             self.launch_panel.refresh_leftovers()
 
     def do_kill_leftovers(self):
         self.prompt_kill_leftovers()
 
     def _sim_exited(self, proc, code):
+        """Called from the process-wait thread: hop to the GUI thread before any widget."""
+        self.bg.post(lambda: self._sim_exited_gui(code))
+
+    def _sim_exited_gui(self, code):
         if not self._stack_running or self._stopping:
             return
+        self._cancel_starting()
         self._stack_running = False
         self.launch_panel.set_running(False)
         self._set_actions_running(False)
         self.dataset_panel.set_recording(False)
+        self.toasts.show('Gazebo / ros2 launch exited with code %s - see the sim tab in the '
+                         'Log' % code, 'error')
         self._notice('error', 'Gazebo/launch exited with code %s - see the sim log tab' % code)
-        for name in ('coverage', 'detector', 'dataset', 'teleop', 'rviz'):
-            if self.manager.running(name):
-                self.manager.stop(name, int_wait=4.0, term_wait=2.0)
+        names = [n for n in ('coverage', 'detector', 'dataset', 'teleop', 'rviz')
+                 if self.manager.running(n)]
+        if names:
+            self.bg.run(lambda: [self.manager.stop(n, int_wait=4.0, term_wait=2.0)
+                                 for n in names], name='stop-orphans')
 
     # -------------------------------------------------------------- live toggles
     def live_toggle(self, name, value):
@@ -632,9 +777,9 @@ class MainWindow(QMainWindow):
         self.cfg = cfg
         self.settings['stack'] = cfg.to_dict()
         if name == 'teleop':
-            self._start_teleop(cfg) if value else self.manager.stop('teleop')
+            self._start_teleop(cfg) if value else self._stop_async('teleop', 'gamepad teleop')
         elif name == 'detector':
-            self._start_detector(cfg) if value else self.manager.stop('detector')
+            self._start_detector(cfg) if value else self._stop_async('detector', 'detector')
         elif name in ('coverage', 'meter', 'autostart'):
             self._restart_coverage(cfg)
         elif name in ('reclean', 'reclean_source'):
@@ -646,18 +791,55 @@ class MainWindow(QMainWindow):
         # keep the applied snapshot: a live toggle must not hide a pending restart
         self.launch_panel.set_running(True)
 
+    def _stop_async(self, name, label, then=None, **kwargs):
+        """Stop one managed process without freezing the window; a card shows the outcome."""
+        if not self.manager.running(name):
+            if then is not None:
+                then()
+            return
+        toast = self.toasts.busy('Stopping %s…' % label)
+
+        def done(_result, error):
+            if error is not None:
+                self.toasts.finish(toast, 'Could not stop %s: %s' % (label, error), 'error')
+            else:
+                self.toasts.finish(toast, '%s stopped' % label[:1].upper() + label[1:], 'ok',
+                                   2500)
+            if then is not None:
+                then()
+
+        self.bg.run(lambda: self.manager.stop(name, **kwargs), done, name='stop-' + name)
+
+    def _start_proc(self, name, label, argv, env=None):
+        """Start a managed process and say so; False when it could not be started."""
+        if self.manager.running(name):
+            return True
+        ok = self.manager.start(name, argv, env=env)
+        if ok:
+            self.toasts.show('%s started' % label, 'ok', 2500)
+        else:
+            self.toasts.show('Could not start %s - see the Log tab' % label.lower(), 'error')
+        return ok
+
     def _start_teleop(self, cfg):
         env = self.manager.env()
         if cfg.qt_platform:
             env['QT_QPA_PLATFORM'] = cfg.qt_platform
-        self.manager.start('teleop', cfg.teleop_command(), env=env)
+        self._start_proc('teleop', 'Gamepad teleop', cfg.teleop_command(), env=env)
 
     def _start_detector(self, cfg):
-        if not cfg.camera_needed:
+        # Judge by what the *running* launch has, not by the panel: ticking the detector
+        # makes cfg.camera_needed true by itself, but the URDF of this launch is fixed.
+        if not self._launched_camera:
             self._notice('warn', 'the camera was disabled at launch; tick the camera option '
                                  'and restart the stack before starting the detector')
+            box = self.launch_panel.detector
+            box.blockSignals(True)
+            box.setChecked(False)
+            box.blockSignals(False)
+            self.launch_panel._changed()
             return
-        self.manager.start('detector', cfg.detector_command())
+        self._start_proc('detector', 'Dirt detector', cfg.detector_command())
 
     def _coverage_params_file(self, cfg):
         if cfg.reclean:
@@ -674,18 +856,20 @@ class MainWindow(QMainWindow):
 
     def _start_coverage(self, cfg):
         params = self._coverage_params_file(cfg)
-        self.manager.start('coverage',
-                           cfg.coverage_command(str(paths.default_map()), params,
-                                                autostart=cfg.autostart))
+        self._start_proc('coverage', 'Coverage mission',
+                         cfg.coverage_command(str(paths.default_map()), params,
+                                              autostart=cfg.autostart))
         self.mission_panel.set_running(True)
 
     def _restart_coverage(self, cfg):
-        if self.manager.running('coverage'):
-            self.manager.stop('coverage', int_wait=5.0, term_wait=3.0)
-        if cfg.coverage:
-            self._start_coverage(cfg)
-        else:
-            self.mission_panel.set_running(False)
+        def start():
+            if cfg.coverage:
+                self._start_coverage(cfg)
+            else:
+                self.mission_panel.set_running(False)
+
+        self._stop_async('coverage', 'coverage mission', then=start,
+                         int_wait=5.0, term_wait=3.0)
 
     def rviz_toggle(self, enabled):
         if enabled:
@@ -695,9 +879,9 @@ class MainWindow(QMainWindow):
             source = Path(paths.workspace_root()) / 'src' / 'vacuum_bringup' / 'rviz' / \
                 'navigation.rviz'
             config = str(source if source.is_file() else rviz_config)
-            self.manager.start('rviz', self.cfg.rviz_command(config), env=env)
+            self._start_proc('rviz', 'RViz', self.cfg.rviz_command(config), env=env)
         else:
-            self.manager.stop('rviz')
+            self._stop_async('rviz', 'RViz')
 
     def open_gazebo_gui(self):
         if not self._stack_running:
@@ -827,6 +1011,7 @@ class MainWindow(QMainWindow):
                                       % (len(joy.axes), len(joy.buttons)))
 
     def _dashboard_received(self, dash):
+        self._last_dash = dash
         self.dashboard.update_dashboard(dash)
         self.mission_panel.set_coverage(dash.coverage_pct, dash.coverage_free_pct)
         if dash.mission_status and dash.mission_status != self._last_mission_text:
@@ -839,6 +1024,9 @@ class MainWindow(QMainWindow):
         pass
 
     def _notice(self, level, text):
+        if threading.current_thread() is not threading.main_thread():
+            self.bg.post(lambda: self._notice(level, text))      # widgets: GUI thread only
+            return
         self.status_message.setText(text)
         self.log_console.append('gui', level if level in ('warn', 'error') else 'info', text)
         if level == 'error':
@@ -847,6 +1035,60 @@ class MainWindow(QMainWindow):
             self.status_message.setStyleSheet('color: #e8a33d;')
         else:
             self.status_message.setStyleSheet('')
+        if level in ('warn', 'error'):
+            self.toasts.show(text, level)
+
+    # ------------------------------------------------------------ mission services
+    TRIGGER_LABELS = {'plan': ('Planning route', 'Planning'),
+                      'start': ('Starting cleaning', 'Starting'),
+                      'stop': ('Stopping mission', 'Stopping'),
+                      'reset_meter': ('Resetting meter', 'Resetting')}
+
+    def _trigger_button(self, service):
+        m = self.mission_panel
+        return {'plan': m.plan, 'start': m.start, 'stop': m.stop,
+                'reset_meter': m.reset}.get(service)
+
+    def run_trigger(self, service):
+        """Call a mission/meter service and show, at once and at the end, what happened."""
+        label, verb = self.TRIGGER_LABELS.get(service, (service, service))
+        if service in self._pending:
+            self.toasts.show('%s: still waiting for the previous request' % label, 'warn')
+            return
+        if not self.backend.available():
+            self.toasts.show('%s: ROS is not connected (%s)'
+                             % (label, self.backend.reason()), 'error')
+            button = self._trigger_button(service)
+            if button is not None:
+                feedback.end(button, 'fail')      # red ring: the press did register
+            return
+        toast = self.toasts.busy('%s…' % label)
+        button = self._trigger_button(service)
+        if button is not None:
+            feedback.begin(button, verb)
+        watchdog = QTimer(self)
+        watchdog.setSingleShot(True)
+        watchdog.timeout.connect(lambda: self._trigger_done(
+            service, False, 'no answer after 10 s - is the mission node running?'))
+        watchdog.start(10000)
+        self._pending[service] = (toast, button, watchdog)
+        self.backend.call_trigger(service)
+
+    def _trigger_done(self, service, ok, message):
+        pending = self._pending.pop(service, None)
+        label = self.TRIGGER_LABELS.get(service, (service, service))[0]
+        if pending is None:         # e.g. the e-stop's own stop call: just log it
+            self._notice('info' if ok else 'warn', '%s: %s' % (service, message))
+            return
+        toast, button, watchdog = pending
+        watchdog.stop()
+        watchdog.deleteLater()
+        if button is not None:
+            feedback.end(button, 'ok' if ok else 'fail')
+        text = '%s: %s' % (label, message) if message else (
+            '%s - done' % label if ok else '%s failed' % label)
+        self.toasts.finish(toast, text, 'ok' if ok else 'error')
+        self.log_console.append('gui', 'info' if ok else 'error', text)
 
     # -------------------------------------------------------------- teleop/e-stop
     def set_estop(self, active):
@@ -873,7 +1115,7 @@ class MainWindow(QMainWindow):
         if self._estop:
             self.set_estop(False)
         self.backend.cancel_nav_goal()
-        self.backend.call_trigger('stop')
+        self.run_trigger('stop')
 
     # ---------------------------------------------------------------- records ---
     def start_recording(self):
@@ -881,19 +1123,25 @@ class MainWindow(QMainWindow):
         if cfg.dirt <= 0:
             self._notice('warn', 'recording needs dirt>0 (labels come from the dirt layout)')
             return
-        if not cfg.camera_needed:
+        if not self._launched_camera:
             self._notice('warn', 'recording needs the camera in the URDF; tick the camera '
                                  'option and restart')
             return
-        self.manager.start('dataset', cfg.dataset_command(),
-                           on_exit=lambda proc, rc: self.dataset_panel.set_recording(False))
+        if self.manager.running('dataset'):
+            return
+        ok = self.manager.start(
+            'dataset', cfg.dataset_command(),
+            on_exit=lambda proc, rc: self.bg.post(
+                lambda: self.dataset_panel.set_recording(False)))
+        if not ok:
+            self.toasts.show('Could not start the dataset recorder - see the Log tab', 'error')
+            return
         self.dataset_panel.set_recording(True)
         self.dataset_panel.set_dataset_dir(cfg.dataset_path())
-        self._notice('info', 'dataset recording started into %s' % cfg.dataset_path())
+        self.toasts.show('Dataset recording started into %s' % cfg.dataset_path(), 'ok')
 
     def stop_recording(self):
-        if self.manager.running('dataset'):
-            self.manager.stop('dataset', int_wait=10.0, term_wait=4.0)
+        self._stop_async('dataset', 'dataset recording', int_wait=10.0, term_wait=4.0)
         self.dataset_panel.set_recording(False)
 
     def package_dataset(self, source, output, classes):
@@ -903,9 +1151,24 @@ class MainWindow(QMainWindow):
 
     def save_map(self, name):
         name = (name or '').strip() or time.strftime('map_%Y%m%d_%H%M%S')
-        self.manager.start('save_map', self.cfg.save_map_command(name))
-        self._notice('info', 'saving map as %s' % name)
-        QTimer.singleShot(4000, self.mission_panel.refresh_maps)
+        button = self.mission_panel.save_button
+        feedback.begin(button, 'Saving')
+        started = self.manager.start(
+            'save_map', self.cfg.save_map_command(name),
+            on_exit=lambda proc, rc: self.bg.post(lambda: self._map_saved(name, rc)))
+        if not started:
+            feedback.end(button, 'fail')
+            self.toasts.show('Could not save the map (a save is already running?)', 'error')
+
+    def _map_saved(self, name, code):
+        ok = code == 0
+        feedback.end(self.mission_panel.save_button, 'ok' if ok else 'fail')
+        if ok:
+            self.toasts.show('Map saved as "%s" in %s' % (name, paths.maps_dir()), 'ok')
+        else:
+            self.toasts.show('Saving map "%s" failed (exit code %s) - is the sim up and '
+                             'publishing /map? See the Log tab' % (name, code), 'error')
+        self.mission_panel.refresh_maps()
 
     # ---------------------------------------------------------------- extras ----
     def take_screenshot(self, target='map'):
@@ -919,6 +1182,8 @@ class MainWindow(QMainWindow):
             ok = self.map_panel.view.grab_png(str(path))
         self._notice('info' if ok else 'warn',
                      'screenshot saved %s' % path if ok else 'screenshot failed')
+        if ok:
+            self.toasts.show('Screenshot saved: %s' % path, 'ok')
 
     def record_gif(self, target, seconds, fps):
         if self._gif_timer is not None:
@@ -965,6 +1230,7 @@ class MainWindow(QMainWindow):
                 images[0].save(path, save_all=True, append_images=images[1:], duration=500,
                                loop=0)
                 self._notice('info', 'GIF saved %s' % path)
+                self.bg.post(lambda: self.toasts.show('GIF saved: %s' % path, 'ok'))
         except Exception as exc:      # noqa: BLE001 - PIL may be missing
             self._notice('warn', 'GIF failed: %s' % exc)
 
@@ -976,10 +1242,11 @@ class MainWindow(QMainWindow):
             argv = ['ros2', 'bag', 'record', '-o', str(out)] + list(topics)
             if self.manager.start('rosbag', argv):
                 self.tools_panel.set_bag_state(True, 'recording to %s' % out)
+                self.toasts.show('Recording a rosbag to %s' % out, 'ok')
             else:
                 self.tools_panel.set_bag_state(False, 'could not start rosbag')
         else:
-            self.manager.stop('rosbag', int_wait=8.0, term_wait=4.0)
+            self._stop_async('rosbag', 'rosbag recording', int_wait=8.0, term_wait=4.0)
             self.tools_panel.set_bag_state(False, 'stopped')
 
     # -------------------------------------------------------------- presets ----
@@ -1018,15 +1285,18 @@ class MainWindow(QMainWindow):
         self._notice('info', 'preset saved: %s' % name.strip())
 
     # ---------------------------------------------------------------- theme ----
-    def cycle_theme(self):
-        modes = ['system', 'dark', 'light']
-        current = self.settings.get('ui', {}).get('theme', 'system')
-        index = (modes.index(current) + 1) % len(modes) if current in modes else 0
-        mode = modes[index]
-        self.settings.setdefault('ui', {})['theme'] = mode
-        applied = theme.apply(self.app, mode)
-        self._notice('info', 'theme: %s (%s)' % (mode, applied))
-        settings.save(self.settings)
+    def _theme_chosen(self, index):
+        key = self.theme_combo.itemData(index)
+        self.settings.setdefault('ui', {})['theme'] = key
+        applied = theme.apply(self.app, key)
+        name = theme.label(key)
+        if key == theme.SYSTEM:
+            name += ' (%s)' % theme.label(applied)
+        self.toasts.show('Theme: %s' % name, 'info', 1800)
+        try:
+            settings.save(self.settings)
+        except OSError:
+            pass
 
     def show_help(self):
         HelpDialog(self).exec()
@@ -1071,6 +1341,12 @@ class MainWindow(QMainWindow):
 
     # ----------------------------------------------------------------- close ---
     def closeEvent(self, event):      # noqa: N802
+        if self._stopping:
+            self._close_after_stop = True
+            self.toasts.show('Still stopping the stack - the window closes when it is done',
+                             'warn')
+            event.ignore()
+            return
         if self._stack_running:
             dialog = QMessageBox(self)
             dialog.setWindowTitle('The stack is running')
@@ -1086,7 +1362,13 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
             if dialog.clickedButton() is stop:
-                self.stop_stack()
+                # the window is going away anyway: stop here, in line, so nothing is orphaned
+                sim = self.manager.get('sim')
+                self._stopping = True
+                self._cancel_starting()
+                self._stop_processes(sim.pgid if sim is not None else None)
+                self._stack_running = False
+                self._stopping = False
             elif dialog.clickedButton() is leave:
                 self._notice('warn', 'leaving the stack running')
         self._save_view_settings()

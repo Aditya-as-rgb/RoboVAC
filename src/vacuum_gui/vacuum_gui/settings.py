@@ -50,6 +50,7 @@ UI_DEFAULTS = {
     'start_page': 'map',
     'confirm_close_running': True,
     'help_seen': False,
+    'preflight_warnings': True,   # False: skip the "pre-flight warnings" confirmation
     'qt_platform': '',            # '' = let Qt decide; 'xcb' forces XWayland
 }
 
@@ -148,6 +149,8 @@ def load(path=None):
     merged = _merge(DEFAULTS, data)
     merged = {key: merged[key] for key in DEFAULTS}
     merged['stack'] = StackConfig.from_dict(merged.get('stack')).to_dict()
+    from . import theme
+    merged['ui']['theme'] = theme.normalize(merged['ui'].get('theme'))
     return merged
 
 

@@ -119,6 +119,9 @@ def generate_launch_description():
         'slam': LaunchConfiguration('slam'),
         'map': LaunchConfiguration('map'),
         'rviz': LaunchConfiguration('rviz'),
+        # AMCL must start where the robot is spawned
+        'x_pose': LaunchConfiguration('x_pose'),
+        'y_pose': LaunchConfiguration('y_pose'),
     }.items())
 
     return LaunchDescription([

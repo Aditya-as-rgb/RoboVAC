@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox,
                                QSpinBox, QToolButton, QVBoxLayout, QWidget)
 
 from . import paths, preflight
+from . import feedback
 from .commands import LAUNCH_TIME_FIELDS, StackConfig, restart_fields, shell_join
 from .settings import default_presets
 from .ui_common import Dot, SectionHeader, hint
@@ -400,8 +401,8 @@ class LaunchPanel(QWidget):
         self.leftovers = QLabel('')
         self.leftovers.setObjectName('hint')
         kill = QPushButton('Kill leftovers')
-        kill.setToolTip('SIGTERM (then SIGKILL) any gz sim / ruby / rviz2 that outlived '
-                        'a previous run')
+        kill.setToolTip('SIGTERM (then SIGKILL) any gz sim / ruby / ros_gz_bridge that '
+                        'outlived a previous run. RViz and Nav2 processes are left alone.')
         kill.clicked.connect(self.kill_leftovers_requested.emit)
         restart = QPushButton('Apply & restart')
         restart.clicked.connect(self._apply_and_restart)
@@ -682,6 +683,23 @@ class LaunchPanel(QWidget):
     def _start(self):
         self.start_requested.emit(self.config())
 
+    # -------------------------------------------------- busy state of the buttons --
+    def set_starting(self, text):
+        """Start turns into a spinner at once; it stays so until clear_starting()."""
+        feedback.begin(self.start_button, text)
+
+    def set_start_stage(self, text):
+        feedback.set_text(self.start_button, text)
+
+    def clear_starting(self, result=None):
+        feedback.end(self.start_button, result, enable=not self._running)
+
+    def set_stopping(self, text='Stopping'):
+        feedback.begin(self.stop_button, text)
+
+    def clear_stopping(self, result=None):
+        feedback.end(self.stop_button, result, enable=self._running)
+
     def _apply_and_restart(self):
         self.restart_requested.emit(self.config())
 
@@ -697,12 +715,12 @@ class LaunchPanel(QWidget):
 
     # --------------------------------------------------------------- leftovers --
     def refresh_leftovers(self, exclude=(), active=False):
-        from .launch_manager import find_leftovers
+        from .launch_manager import BLOCKING_KINDS, find_leftovers
         if active:
             self.leftovers.setText('stack running')
             self.leftovers.setStyleSheet('')
             return
-        left = find_leftovers(exclude_pids=exclude)
+        left = find_leftovers(exclude_pids=exclude, only=BLOCKING_KINDS)
         if left:
             self.leftovers.setText('%d leftover process(es)' % len(left))
             self.leftovers.setStyleSheet('color: #e8a33d;')
