@@ -1,0 +1,1 @@
+../../../../src/vacuum_gazebo/scripts/dirt_world.py
