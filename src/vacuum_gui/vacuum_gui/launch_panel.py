@@ -17,7 +17,7 @@
 Launch-time options (map, world, camera, dirt, odometry, headless) are greyed out while
 the stack runs, and changing them raises a "restart needed" badge with a one-click
 "Apply & restart". The live ones (teleop, detector, coverage, RViz, recording) are separate
-processes owned by the window, so switching them never restarts Gazebo.
+processes owned by the window, so switching them never restarts the simulator.
 """
 
 import os
@@ -32,12 +32,13 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox,
 
 from . import paths, preflight
 from . import feedback
-from .commands import LAUNCH_TIME_FIELDS, StackConfig, restart_fields, shell_join
+from .commands import LAUNCH_TIME_FIELDS, SIMULATORS, StackConfig, restart_fields, shell_join
 from .settings import default_presets
 from .ui_common import Dot, SectionHeader, hint
 
 
 FIELD_LABELS = {
+    'sim': 'simulator',
     'slam': 'mode', 'map': 'map', 'world': 'world', 'x_pose': 'spawn x',
     'y_pose': 'spawn y', 'odom_source': 'odometry', 'headless': 'headless',
     'cameras': 'camera', 'dirt': 'dirt count', 'dirt_seed': 'dirt seed',
@@ -107,7 +108,7 @@ class LaunchPanel(QWidget):
     stop_requested = Signal()
     restart_requested = Signal(object)        # StackConfig
     live_toggled = Signal(str, bool)          # name, enabled
-    open_gazebo_requested = Signal()
+    open_simulator_requested = Signal()
     rviz_toggled = Signal(bool)
     kill_leftovers_requested = Signal()
     presets_requested = Signal()
@@ -161,6 +162,11 @@ class LaunchPanel(QWidget):
 
         mode_box = QGroupBox('Mode, map and world')
         mode_layout = QFormLayout(mode_box)
+        self.sim = QComboBox()
+        for value, label in SIMULATORS.items():
+            self.sim.addItem(label, value)
+        self._add(mode_layout, 'sim', 'Simulator', self.sim, launch=True,
+                  tip='MuJoCo requires the optional Jazzy packages and supports the living room.')
         self.slam = QComboBox()
         self.slam.addItem('Localize on a saved map (slam:=False)', False)
         self.slam.addItem('Map while driving (slam:=True)', True)
@@ -214,13 +220,13 @@ class LaunchPanel(QWidget):
         self.odom_source.addItem('Wheel odometry (drifts)', 'robot_wheels')
         self._add(mode_layout, 'odom_source', 'Odometry', self.odom_source, launch=True,
                   tip='AMCL needs a pose that is roughly right; wheel odometry drifts in sim.')
-        self.headless = QCheckBox('No Gazebo window (saves GPU, ~half the load)')
+        self.headless = QCheckBox('Run without a simulator window')
         self._add(mode_layout, 'headless', 'Headless', self.headless, launch=True,
-                  tip='Draws the views here instead; Gazebo runs as a server only.')
-        self.cameras = QCheckBox('Front floor camera in the URDF')
+                  tip='The map and camera views remain available here.')
+        self.cameras = QCheckBox('Enable front floor camera')
         self._add(mode_layout, 'cameras', 'Camera', self.cameras, launch=True,
-                  tip='Needed by the detector and by dataset recording (they enable it '
-                      'themselves). Costs ~10 %% GPU.')
+                  tip='Show the raw image in the Camera tab and in RViz. The dirt detector '
+                      'and dataset recorder also enable the camera at launch.')
         self.qt_platform = QComboBox()
         self.qt_platform.setEditable(True)
         for value, label in (('xcb', 'xcb (XWayland, safest on Wayland)'),
@@ -294,11 +300,10 @@ class LaunchPanel(QWidget):
         cap_layout.addWidget(self.autostart)
         rviz_row = QHBoxLayout()
         rviz_row.addWidget(self.rviz)
-        self.gazebo_button = QPushButton('Open Gazebo GUI…')
-        self.gazebo_button.setToolTip('Gazebo can only show its window if the stack was '
-                                      'started with headless off')
-        self.gazebo_button.clicked.connect(self.open_gazebo_requested.emit)
-        rviz_row.addWidget(self.gazebo_button)
+        self.simulator_button = QPushButton('Simulator window…')
+        self.simulator_button.setToolTip('Show the simulator window by starting the stack with headless off.')
+        self.simulator_button.clicked.connect(self.open_simulator_requested.emit)
+        rviz_row.addWidget(self.simulator_button)
         cap_layout.addLayout(rviz_row)
         self._collapsible(cap_box, True)
         form.addWidget(cap_box)
@@ -369,7 +374,7 @@ class LaunchPanel(QWidget):
         self.nav_delay.setSingleStep(1.0)
         self.nav_delay.setSuffix(' s')
         self._add(misc_layout, 'nav_delay', 'Nav2 delay', self.nav_delay, launch=True,
-                  tip='Seconds Gazebo gets before Nav2 starts (needs /clock, /scan, TF)')
+                  tip='Seconds the simulator gets before Nav2 starts (needs /clock, /scan, TF)')
         self._collapsible(misc_box, False)
         form.addWidget(misc_box)
         form.addStretch(1)
@@ -554,6 +559,7 @@ class LaunchPanel(QWidget):
     def config(self):
         map_value = self.map.currentText().strip()
         return StackConfig(
+            sim=self.sim.currentData(),
             slam=bool(self._get('slam', False)),
             map=map_value,
             world=self.world.currentText().strip() or 'living_room.world',
@@ -636,15 +642,13 @@ class LaunchPanel(QWidget):
         self._update_preview()
         if self._running:
             self._update_restart_state()
-        if self.detector.isChecked() and not self.cameras.isChecked():
-            self.cameras.setToolTip('The detector switches the camera on by itself.')
         self._update_detector_hint()
 
     def _update_detector_hint(self):
-        enabled = self._running and not self.cameras.isChecked() and self.detector.isChecked()
+        camera_off = self._running and not StackConfig.from_dict(self._applied).camera_needed
         self.detector.setToolTip(
-            'Camera recording is off in this launch: the detector needs enable_cameras. '
-            'Tick "Front floor camera" and restart.' if enabled else
+            'The floor camera is off. Restart with "Enable front floor camera" selected.'
+            if camera_off else
             'Runs vacuum_vision/detector.launch.py as its own process')
 
     def restart_fields(self):
@@ -678,6 +682,7 @@ class LaunchPanel(QWidget):
         self.stop_button.setEnabled(running)
         self.state_dot.set_state('ok' if running else 'unknown')
         self._update_restart_state()
+        self._update_detector_hint()
         self._update_preview()
 
     def _start(self):
@@ -708,7 +713,7 @@ class LaunchPanel(QWidget):
         if self._running:
             answer = QMessageBox.question(
                 self, 'New dirt layout',
-                'The dirt layout is generated when Gazebo starts, so a new seed needs a '
+                'The dirt layout is generated when the simulator starts, so a new seed needs a '
                 'restart. Restart the stack now?')
             if answer == QMessageBox.StandardButton.Yes:
                 self.restart_requested.emit(self.config())

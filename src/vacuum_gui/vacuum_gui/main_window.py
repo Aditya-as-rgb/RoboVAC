@@ -39,7 +39,7 @@ from . import feedback, paths, preflight, settings, theme
 from .background import Background
 from .backend import NullBackend
 from .camera_view import CameraPanel
-from .commands import StackConfig, shell_join
+from .commands import SIMULATORS, StackConfig, shell_join
 from .dashboard_bar import DashboardBar
 from .dataset_panel import DatasetPanel
 from .dirt_inspector import DirtInspector
@@ -80,7 +80,7 @@ class HelpDialog(QDialog):
         browser.setHtml("""
         <h2>What this window does</h2>
         <p>It starts the simulation and draws everything the robot knows from ROS topics,
-        so Gazebo can run without a window and RViz is optional.</p>
+        so the simulator can run without a window and RViz is optional.</p>
         <h3>Panels</h3>
         <ul>
         <li><b>Stack</b> (left): every launch option, the exact command line, Start/Stop,
@@ -430,7 +430,7 @@ class MainWindow(QMainWindow):
         p.kill_leftovers_requested.connect(self.do_kill_leftovers)
         p.preset_selected.connect(self.load_preset)
         p.save_preset_requested.connect(self.save_preset)
-        p.open_gazebo_requested.connect(self.open_gazebo_gui)
+        p.open_simulator_requested.connect(self.open_simulator_window)
 
         m = self.mission_panel
         m.plan_requested.connect(lambda: self.run_trigger('plan'))
@@ -577,7 +577,7 @@ class MainWindow(QMainWindow):
         # the button keeps spinning and a card tracks the stage until Nav2 is up
         self._starting = True
         self._start_t0 = time.monotonic()
-        self._start_toast = self.toasts.busy('Starting stack: launching Gazebo and Nav2…')
+        self._start_toast = self.toasts.busy('Launching %s and Nav2…' % SIMULATORS[cfg.sim])
         self.launch_panel.set_start_stage('Launching')
         self._startup_timer.start()
         QTimer.singleShot(1500, lambda: self._start_live_parts(cfg))
@@ -599,12 +599,13 @@ class MainWindow(QMainWindow):
         nav_up = bool(dash and dash.nav2_state in ('active', 'partially active'))
         sim_up = bool(dash and dash.sim_time and dash.sim_time > 0)
         if nav_up:
-            self._finish_starting(True, 'Stack ready: Gazebo and Nav2 are up (%.0f s)' % elapsed)
+            self._finish_starting(True, 'Stack ready: %s and Nav2 are up (%.0f s)' %
+                                  (SIMULATORS[self.cfg.sim], elapsed))
         elif elapsed > 150.0:
             self._finish_starting(False, 'Still not ready after 2.5 min - open the Log tab '
                                          'and check the sim process')
         else:
-            stage = 'Waiting for Nav2' if sim_up else 'Launching Gazebo'
+            stage = 'Waiting for Nav2' if sim_up else 'Launching %s' % SIMULATORS[self.cfg.sim]
             self.launch_panel.set_start_stage(stage)
             self.toasts.update(self._start_toast,
                                'Starting stack: %s… (%d s)' % (stage.lower(), elapsed))
@@ -762,9 +763,9 @@ class MainWindow(QMainWindow):
         self.launch_panel.set_running(False)
         self._set_actions_running(False)
         self.dataset_panel.set_recording(False)
-        self.toasts.show('Gazebo / ros2 launch exited with code %s - see the sim tab in the '
+        self.toasts.show('Simulator launch exited with code %s - see the sim tab in the '
                          'Log' % code, 'error')
-        self._notice('error', 'Gazebo/launch exited with code %s - see the sim log tab' % code)
+        self._notice('error', 'Simulator launch exited with code %s - see the sim log tab' % code)
         names = [n for n in ('coverage', 'detector', 'dataset', 'teleop', 'rviz')
                  if self.manager.running(n)]
         if names:
@@ -883,27 +884,22 @@ class MainWindow(QMainWindow):
         else:
             self._stop_async('rviz', 'RViz')
 
-    def open_gazebo_gui(self):
+    def open_simulator_window(self):
+        cfg = self.cfg if self._stack_running else self.launch_panel.config()
+        title = '%s window' % SIMULATORS[cfg.sim]
         if not self._stack_running:
-            QMessageBox.information(
-                self, 'Gazebo GUI',
-                'The stack is not running. Start it with "No Gazebo window (headless)" '
-                'unticked to get the Gazebo window.')
+            QMessageBox.information(self, title, 'Turn off Headless and start the stack.')
             return
-        if self.cfg.headless:
-            answer = QMessageBox.question(
-                self, 'Gazebo GUI',
-                'This stack runs headless, so Gazebo has no window to open. Restart it '
-                'with headless off? (This window keeps drawing everything either way.)')
+        if cfg.headless:
+            answer = QMessageBox.question(self, title,
+                                          'Restart the stack with Headless off?')
             if answer == QMessageBox.StandardButton.Yes:
                 cfg = self.launch_panel.config()
                 cfg.headless = False
                 self.launch_panel.set_config(cfg)
                 self.restart_stack(cfg)
         else:
-            QMessageBox.information(self, 'Gazebo GUI',
-                                    'The Gazebo window is part of the running stack; check '
-                                    'your task bar.')
+            QMessageBox.information(self, title, 'The simulator window is on your taskbar.')
 
     def _reclean_toggled(self, value):
         self.launch_panel.reclean.setChecked(value)
@@ -962,7 +958,7 @@ class MainWindow(QMainWindow):
             self.backend.set_expectations({'running': False})
             return
         self.backend.set_expectations({
-            'running': True, 'slam': bool(cfg.slam), 'coverage': bool(cfg.coverage),
+            'running': True, 'sim': cfg.sim, 'slam': bool(cfg.slam), 'coverage': bool(cfg.coverage),
             'detector': bool(cfg.detector), 'teleop': bool(cfg.teleop),
             'camera': bool(cfg.camera_needed), 'dirt': cfg.dirt > 0,
         })
@@ -1350,7 +1346,7 @@ class MainWindow(QMainWindow):
         if self._stack_running:
             dialog = QMessageBox(self)
             dialog.setWindowTitle('The stack is running')
-            dialog.setText('Close the panel and leave Gazebo running?')
+            dialog.setText('Close the panel and leave the simulator running?')
             dialog.setInformativeText(
                 'Stop stack: sends SIGINT to the process group and waits (no orphan gz).\n'
                 'Leave running: the sim keeps going; use "Kill leftovers" or Stop next time.')

@@ -664,8 +664,11 @@ class RosBackend(RobotBackend):
             return ('/' + name) in names or name in names
 
         # a stack started outside the panel (or left running) still deserves real lights
+        mujoco = (expect.get('sim') == 'mujoco' if expect.get('running')
+                  else has('mujoco_ros2_control_node'))
+        sim_node = 'mujoco_ros2_control_node' if mujoco else 'ros_gz_bridge'
         running = bool(expect.get('running')) or rate('clock') > 1.0 or any(
-            has(n) for n in ('controller_server', 'ros_gz_bridge'))
+            has(n) for n in ('controller_server', sim_node))
         if running:
             items.append(status.light_for_topic('/clock', rate('clock'), 5.0,
                                                 stale_age=age('clock'), stale_limit=3.0))
@@ -673,7 +676,7 @@ class RosBackend(RobotBackend):
             items.append(status.HealthItem('clock', '/clock', status.UNKNOWN,
                                            'no stack started yet'))
 
-        checks = [('ros_gz_bridge', True, 'ros_gz_bridge'),
+        checks = [(sim_node, True, 'MuJoCo control' if mujoco else 'ros_gz_bridge'),
                   ('controller_server', True, 'Nav2 controller'),
                   ('bt_navigator', True, 'Nav2 behaviour tree'),
                   ('planner_server', False, 'Nav2 planner'),

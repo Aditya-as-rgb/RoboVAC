@@ -21,9 +21,8 @@ The GUI owns teleop, detector, coverage mission, dataset recording and RViz as *
 managed processes. That is what makes them live-togglable without restarting Gazebo:
 ``vacuum.launch.py`` is started with ``teleop:=none coverage:=false meter:=false
 detector:=false collect_dataset:=false rviz:=false`` and the GUI starts those nodes
-itself when the matching switch is on. The camera (``enable_cameras``) is baked into the
-URDF at launch time, so it stays a launch-time option - and so does everything the world,
-the map, the dirt and the odometry need.
+itself when the matching switch is on. The simulator, camera, world, map, dirt, and
+odometry are selected at launch time.
 """
 
 import os
@@ -35,7 +34,9 @@ TRUTHY = ('1', 'true', 'yes', 'on', 'True')
 
 # Options that are baked into the URDF / world / map when the stack starts. Changing one
 # while the stack runs needs a restart; everything else is a separate process.
-LAUNCH_TIME_FIELDS = ('slam', 'map', 'world', 'x_pose', 'y_pose', 'odom_source',
+SIMULATORS = {'gazebo': 'Gazebo', 'mujoco': 'MuJoCo'}
+
+LAUNCH_TIME_FIELDS = ('sim', 'slam', 'map', 'world', 'x_pose', 'y_pose', 'odom_source',
                       'headless', 'cameras', 'dirt', 'dirt_seed', 'dirt_scale',
                       'dirt_stubborn', 'dirt_brush', 'dirt_clean', 'dirt_randomize',
                       'dirt_dir', 'nav_delay', 'qt_platform')
@@ -71,7 +72,7 @@ class StackConfig:
     y_pose: float = -0.5
     odom_source: str = 'ground_truth'
     headless: bool = True
-    cameras: bool = False                    # front floor camera in the URDF
+    cameras: bool = False                    # front floor camera
     dirt: int = 0
     dirt_seed: int = 1
     dirt_scale: float = 1.0
@@ -96,8 +97,10 @@ class StackConfig:
     collect_dataset: bool = False
     dataset_dir: str = '~/vacuum_runs/dataset'
     dataset_max_s: float = 3600.0
+    sim: str = 'gazebo'                       # physics backend selected at launch
 
     def __post_init__(self):
+        self.sim = 'mujoco' if str(self.sim).strip().lower() == 'mujoco' else 'gazebo'
         self.dirt = int(self.dirt)
         self.dirt_seed = int(self.dirt_seed)
         self.reclean_source = 'vision' if str(self.reclean_source) == 'vision' else 'map'
@@ -111,7 +114,7 @@ class StackConfig:
     # ------------------------------------------------------------- helpers --
     @property
     def camera_needed(self):
-        """The camera is in the URDF only if something asks for it at launch."""
+        """Whether this launch needs an active floor camera."""
         return bool(self.cameras or self.detector or self.collect_dataset
                     or self.reclean_source == 'vision')
 
@@ -158,6 +161,7 @@ class StackConfig:
         """Arguments for vacuum_bringup/vacuum.launch.py (sim + Nav2 only)."""
         args = [
             'slam:=' + tf(self.slam),
+            'sim:=' + self.sim,
             'world:=' + str(self.world),
             'x_pose:=%g' % float(self.x_pose),
             'y_pose:=%g' % float(self.y_pose),

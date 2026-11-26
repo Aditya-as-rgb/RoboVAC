@@ -136,12 +136,36 @@ def check_map(cfg, ws=None):
 
 
 def check_world(cfg, ws=None):
+    if cfg.sim == 'mujoco':
+        if cfg.world in ('living_room.world', 'living_room.xml'):
+            return Check('World file', True, 'MuJoCo living room')
+        return Check('World file', False, 'MuJoCo supports living_room.world',
+                     'Select living_room.world or switch the simulator to Gazebo.')
     world = Path(paths.gazebo_share(ws)) / 'worlds' / str(cfg.world)
     if world.is_file():
         return Check('World file', True, str(world))
     known = [p.name for p in (Path(paths.gazebo_share(ws)) / 'worlds').glob('*.world')]
     return Check('World file', False, 'not found: %s' % world,
                  'worlds in vacuum_gazebo/worlds: ' + (', '.join(known) or 'none'))
+
+
+def check_mujoco():
+    prefixes = [Path(p) for p in os.environ.get('AMENT_PREFIX_PATH', '').split(os.pathsep) if p]
+    packages = ('mujoco_ros2_control', 'diff_drive_controller', 'joint_state_broadcaster')
+    missing = [pkg for pkg in packages if not any(
+        (prefix / 'share/ament_index/resource_index/packages' / pkg).is_file()
+        for prefix in prefixes)]
+    if missing:
+        return Check('MuJoCo', False, 'packages missing from the ROS environment',
+                     'Install or source ' + ', '.join(missing) + '. See the MuJoCo README section.')
+    for prefix in prefixes:
+        if (prefix / 'share/ament_index/resource_index/packages/vacuum_mujoco').is_file():
+            if (prefix / 'lib/libvacuum_mujoco_sensors.so').is_file():
+                return Check('MuJoCo', True, 'simulator and RoboVAC extension available')
+            break
+    return Check('MuJoCo', False, 'RoboVAC MuJoCo extension unavailable',
+                 'Build vacuum_mujoco with the optional packages installed and source install/%s.'
+                 % paths.shell_setup_name())
 
 
 def check_dirt(cfg, ws=None):
@@ -160,7 +184,7 @@ def check_dirt(cfg, ws=None):
 
 def check_camera(cfg):
     if cfg.camera_needed:
-        return Check('Camera', True, 'camera enabled in the URDF (adds ~10 %% GPU load)',
+        return Check('Camera', True, 'front floor camera enabled',
                      level=INFO)
     return Check('Camera', True, 'camera off: the Camera panel will show "no signal"',
                  level=INFO)
@@ -241,6 +265,8 @@ def run_checks(cfg, ws=None, gamepad=True):
         check_writable(cfg.dataset_path(), 'Dataset folder'),
         check_dataset_tools(ws),
     ]
+    if cfg.sim == 'mujoco':
+        checks.insert(3, check_mujoco())
     if gamepad:
         checks.append(check_gamepad(cfg))
     return checks

@@ -337,10 +337,10 @@ the simulated detector. The PPO policy has yet to be tested in Gazebo, MuJoCo, o
 
 ## Control panel (`vacuum_gui`)
 
-One PySide6 window that starts and stops the stack, draws the map, camera, LiDAR, plans,
-dirt and health from ROS topics, and drives the robot. Gazebo and RViz are **not** embedded,
-so the sim can run headless and RViz is optional; the buttons for the real windows are still
-there.
+One PySide6 window starts and stops the stack, shows the camera and map, and drives the
+robot. In the **Stack** tab, select **Gazebo** or **MuJoCo** under **Simulator** before starting.
+Select **Enable front floor camera** to see the raw feed in the **Camera** tab. The camera
+also appears in RViz when RViz is enabled. Turn off **Headless** to open the simulator window.
 
 ### Build and run
 
