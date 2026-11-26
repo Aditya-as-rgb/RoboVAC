@@ -1,0 +1,119 @@
+{
+  "held_out_seeds": [
+    10000,
+    10063
+  ],
+  "episodes_per_policy": 64,
+  "ppo_seed": 42,
+  "ppo_steps": 32768,
+  "dirt_count": 25,
+  "reclean_budget_s": 75.0,
+  "detector": {
+    "recall": [
+      0.77,
+      0.29,
+      0.83,
+      0.6
+    ],
+    "precision": [
+      0.8,
+      0.6,
+      0.85,
+      0.7
+    ],
+    "position_std": 0.075,
+    "rate_jitter": 0.12
+  },
+  "policies": {
+    "none": {
+      "dirt_left": {
+        "mean": 3.859375,
+        "std": 1.8158664685890402
+      },
+      "extra_time_s": {
+        "mean": 0.0,
+        "std": 0.0
+      },
+      "extra_distance_m": {
+        "mean": 0.0,
+        "std": 0.0
+      },
+      "false_recleans": {
+        "mean": 0,
+        "std": 0.0
+      }
+    },
+    "greedy": {
+      "dirt_left": {
+        "mean": 3.1875,
+        "std": 1.6607036183306485
+      },
+      "extra_time_s": {
+        "mean": 70.67350647362943,
+        "std": 0.0
+      },
+      "extra_distance_m": {
+        "mean": 16.16837661840735,
+        "std": 0.0
+      },
+      "false_recleans": {
+        "mean": 11.796875,
+        "std": 0.4055052697678833
+      }
+    },
+    "oracle": {
+      "dirt_left": {
+        "mean": 0.015625,
+        "std": 0.125
+      },
+      "extra_time_s": {
+        "mean": 38.68058981227709,
+        "std": 17.265003521173462
+      },
+      "extra_distance_m": {
+        "mean": 9.177959953069276,
+        "std": 4.135197469444118
+      },
+      "false_recleans": {
+        "mean": 0,
+        "std": 0.0
+      }
+    },
+    "random": {
+      "dirt_left": {
+        "mean": 2.25,
+        "std": 1.699673171197595
+      },
+      "extra_time_s": {
+        "mean": 32.677459628635944,
+        "std": 27.566940066854652
+      },
+      "extra_distance_m": {
+        "mean": 7.78069303215899,
+        "std": 6.584420180628623
+      },
+      "false_recleans": {
+        "mean": 1.734375,
+        "std": 2.3653731374489477
+      }
+    },
+    "ppo": {
+      "dirt_left": {
+        "mean": 1.328125,
+        "std": 1.1826079265489928
+      },
+      "extra_time_s": {
+        "mean": 38.98725895726777,
+        "std": 18.247149507664833
+      },
+      "extra_distance_m": {
+        "mean": 9.274158489316946,
+        "std": 4.351027552497597
+      },
+      "false_recleans": {
+        "mean": 1.390625,
+        "std": 1.6389813667747783
+      }
+    }
+  }
+}

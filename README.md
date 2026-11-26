@@ -32,6 +32,7 @@ by Maker's Pet / KAIA.AI (Apache-2.0) — see [NOTICE](NOTICE).
 | `vacuum_gui` | PySide6 control panel: launch manager, map/camera/health views, missions, experiments |
 | `tools/dirt_dataset` | dataset batch runner, train/val/test packager, Colab training notebook |
 | `models/dirt_detector` | trained detector (`.pt` + `.onnx`) |
+| `vacuum_rl` | ROS-free Gymnasium environment, re-clean baselines, and masked PPO experiment |
 
 ## Quickstart (fresh clone)
 
@@ -286,6 +287,53 @@ Blind vs vision comparison — same seeds, one flag apart:
 ros2 launch vacuum_bringup vacuum.launch.py dirt:=12 dirt_seed:=3 reclean_source:=map    autostart:=true
 ros2 launch vacuum_bringup vacuum.launch.py dirt:=12 dirt_seed:=3 reclean_source:=vision autostart:=true
 ```
+
+## vacuum_rl
+
+The Gymnasium episode starts after an offline wall-and-lane sweep from the existing coverage
+planner and meter. It uses the same seeded dirt generator and brush accumulation model as
+the simulators. Each action chooses a detected spot or stops. The observation contains robot
+position, seconds left, and a masked, padded list of spot positions, confidence, estimated
+dirt class, and visit counts. Re-cleaning uses shortest paths through reachable grid cells,
+with an out-and-back brush stroke at each goal. Removing ordinary and stubborn patches
+earns 1.0 and 1.8 respectively. Each travel second costs 0.026, and a destination with no
+live dirt within brush range before departure costs another 0.25.
+
+The detector model uses the supplied recall values **0.77, 0.29, 0.83, 0.60** and configurable
+precision assumptions **0.80, 0.60, 0.85, 0.70**, in crumbs, dust, spill, hair order. The repo
+has mAP50 and dust recall figures, so the precision values serve as simulation parameters.
+Position error has a 7.5 cm standard deviation per axis. Training jitters each rate by up to
+12 percentage points per episode. Evaluation uses the fixed rates above.
+
+```bash
+python3 -m venv ~/.venvs/robovac-rl
+source ~/.venvs/robovac-rl/bin/activate
+env -u PYTHONPATH python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+env -u PYTHONPATH python -m pip install './vacuum_rl[train,test]'
+env -u PYTHONPATH python -m pytest vacuum_rl/tests -q
+env -u PYTHONPATH python -m vacuum_rl.experiment train --output /tmp/robovac-policy --seed 42 --steps 32768
+env -u PYTHONPATH python -m vacuum_rl.experiment evaluate --model /tmp/robovac-policy.zip \
+  --output /tmp/robovac-rl-eval --first-seed 10000 --count 64
+```
+
+The run trained masked PPO for 32,768 steps on layouts drawn from seeds 0–511. Each policy
+used the same 64 held-out seeds (10000–10063), 25 starting dirt patches, and a 75-second
+re-clean budget. The greedy baseline executes the existing map-gap set cover's ordered
+targets within the budget. The oracle has perfect detections and prioritizes brush progress
+per second. The random policy samples uniformly among valid spots and stop. Values are
+mean ± sample standard deviation.
+
+| Policy | Dirt left (patches) | Extra time (s) | Extra distance (m) | False re-cleans |
+|---|---:|---:|---:|---:|
+| No re-clean | 3.86 ± 1.82 | 0.00 ± 0.00 | 0.00 ± 0.00 | 0.00 ± 0.00 |
+| Greedy set cover | 3.19 ± 1.66 | 70.67 ± 0.00 | 16.17 ± 0.00 | 11.80 ± 0.41 |
+| Perfect-detection oracle | 0.02 ± 0.13 | 38.68 ± 17.27 | 9.18 ± 4.14 | 0.00 ± 0.00 |
+| Random | 2.25 ± 1.70 | 32.68 ± 27.57 | 7.78 ± 6.58 | 1.73 ± 2.37 |
+| Masked PPO | 1.33 ± 1.18 | 38.99 ± 18.25 | 9.27 ± 4.35 | 1.39 ± 1.64 |
+
+The trained checkpoint, aggregate statistics, and all per-seed rows are in
+[`vacuum_rl/results/`](vacuum_rl/results/). These results cover the living-room grid and
+the simulated detector. The PPO policy has yet to be tested in Gazebo, MuJoCo, or on hardware.
 
 ## Control panel (`vacuum_gui`)
 

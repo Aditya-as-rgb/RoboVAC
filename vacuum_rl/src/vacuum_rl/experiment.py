@@ -102,7 +102,7 @@ def evaluate(model_path, output, first_seed, count):
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
     with (output / "episodes.csv").open("w", newline="") as stream:
-        writer = csv.DictWriter(stream, fieldnames=rows[0])
+        writer = csv.DictWriter(stream, fieldnames=rows[0], lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
     summary = {
