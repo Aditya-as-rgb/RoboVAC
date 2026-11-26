@@ -61,9 +61,10 @@ public:
       }
     }
     if (!dirt_.empty()) {
+      dirt_state_ = std::make_shared<DirtState>();
       dirt_sub_ = node_->create_subscription<std_msgs::msg::String>(
         "/dirt/state", rclcpp::QoS(1).transient_local(),
-        [this](const std_msgs::msg::String & msg) {
+        [state = dirt_state_](const std_msgs::msg::String & msg) {
           std::unordered_set<std::string> remaining;
           static const std::regex patch_name("\"(dirt_[0-9]+)\"");
           for (std::sregex_iterator match(msg.data.begin(), msg.data.end(), patch_name), end;
@@ -71,32 +72,37 @@ public:
           {
             remaining.insert((*match)[1]);
           }
-          std::lock_guard<std::mutex> lock(dirt_mutex_);
-          remaining_ = std::move(remaining);
-          have_dirt_state_ = true;
+          std::lock_guard<std::mutex> lock(state->mutex);
+          state->remaining = std::move(remaining);
+          state->received = true;
         });
     }
-    cmd_pub_ = node_->create_publisher<geometry_msgs::msg::TwistStamped>(
+    auto cmd_pub = node_->create_publisher<geometry_msgs::msg::TwistStamped>(
       "/vacuum_drive/cmd_vel", 10);
     cmd_sub_ = node_->create_subscription<geometry_msgs::msg::Twist>(
-      "/cmd_vel", 10, [this](const geometry_msgs::msg::Twist & msg) {
+      "/cmd_vel", 10, [cmd_pub, clock = node_->get_clock()](const geometry_msgs::msg::Twist & msg) {
         geometry_msgs::msg::TwistStamped stamped;
-        stamped.header.stamp = node_->now();
+        stamped.header.stamp = clock->now();
         stamped.twist = msg;
-        cmd_pub_->publish(stamped);
+        cmd_pub->publish(stamped);
       });
     return true;
   }
 
-  void cleanup() override {}
+  void cleanup() override
+  {
+    cmd_sub_.reset();
+    dirt_sub_.reset();
+  }
 
   void pre_step(mjData * data) override
   {
-    if (!dirt_.empty()) {
-      std::lock_guard<std::mutex> lock(dirt_mutex_);
-      if (have_dirt_state_) {
+    if (dirt_state_) {
+      std::lock_guard<std::mutex> lock(dirt_state_->mutex);
+      if (dirt_state_->received) {
         for (const auto & dirt : dirt_) {
-          data->mocap_pos[3 * dirt.mocap + 2] = remaining_.count(dirt.name) ? dirt.z : -2.;
+          data->mocap_pos[3 * dirt.mocap + 2] =
+            dirt_state_->remaining.count(dirt.name) ? dirt.z : -2.;
         }
       }
     }
@@ -125,6 +131,13 @@ private:
     std::string name;
     int mocap;
     double z;
+  };
+
+  struct DirtState
+  {
+    std::mutex mutex;
+    std::unordered_set<std::string> remaining;
+    bool received = false;
   };
 
   int sensor_address(const char * name) const
@@ -261,17 +274,14 @@ private:
   int body_, scan_site_, accel_, gyro_, attitude_;
   double last_odom_ = -1., last_scan_ = -1., last_imu_ = -1.;
   bool ground_truth_ = true;
-  bool have_dirt_state_ = false;
-  std::mutex dirt_mutex_;
   std::vector<Dirt> dirt_;
-  std::unordered_set<std::string> remaining_;
+  std::shared_ptr<DirtState> dirt_state_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_;
   rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr scan_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;
   std::array<rclcpp::Publisher<ros_gz_interfaces::msg::Contacts>::SharedPtr, 2> bumpers_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr dirt_sub_;
-  rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr cmd_pub_;
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_sub_;
 };
 }  // namespace vacuum_mujoco
