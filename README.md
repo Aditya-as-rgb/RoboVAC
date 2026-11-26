@@ -24,6 +24,7 @@ by Maker's Pet / KAIA.AI (Apache-2.0) — see [NOTICE](NOTICE).
 |---|---|
 | `vacuum_description` | URDF xacro (body, wheels, LiDAR, ToF, side ranges, IMU, bumpers, floor camera, gz plugins), `gz_bridge.yaml`, RViz configs |
 | `vacuum_gazebo` | `worlds/living_room.world`, models, `maps/`, `launch/sim.launch.py`, dirt scripts (`dirt_world`, `dirt_cleaner`, `dirt_labels`, `dirt_dataset`) |
+| `vacuum_mujoco` | Optional MuJoCo backend with hand-written MJCF, wheel control, and ROS sensor publishers |
 | `vacuum_bringup` | `vacuum.launch.py` (everything), `navigation.launch.py` (SLAM or AMCL + Nav2), `config/navigation.yaml`, `save_map.sh` |
 | `vacuum_coverage` | coverage mission, meter, re-clean pass, run report, offline planner/preview |
 | `vacuum_vision` | dirt detector node (YOLO11n via ONNX Runtime), spot tracker, camera geometry |
@@ -158,6 +159,7 @@ Those tests are what CI runs on every push (`.github/workflows/tests.yml`): a ba
 
 | Argument | Default | Meaning |
 |---|---|---|
+| `sim` | `gazebo` | `gazebo` or the optional `mujoco` backend |
 | `slam` | `False` | `True` = SLAM instead of AMCL on a saved map (**capitalised** — the launch files declare `choices=['True','False']`; `slam:=true` is rejected) |
 | `map` | `<ws>/maps/living_room.yaml` | map for AMCL, the meter and the planner; falls back to the copy inside `vacuum_gazebo/maps` |
 | `world`, `x_pose`, `y_pose` | `living_room.world`, `-2.0`, `-0.5` | Gazebo world and spawn pose |
@@ -195,6 +197,33 @@ OGRE/EGL error.
 
 **`vacuum_gui/gui.launch.py`** — the panel only (`xcb`, `theme`, `no_ros`). It starts the
 simulation itself, so there is never a second Gazebo.
+
+## Optional MuJoCo backend
+
+Install the Jazzy simulator and its wheel and joint-state controllers, then build the backend.
+
+```bash
+sudo apt install ros-jazzy-mujoco-ros2-control ros-jazzy-diff-drive-controller \
+  ros-jazzy-joint-state-broadcaster
+source /opt/ros/jazzy/setup.bash
+colcon build --symlink-install --packages-select vacuum_mujoco
+source install/setup.bash
+ros2 launch vacuum_bringup vacuum.launch.py sim:=mujoco headless:=true rviz:=false \
+  autostart:=true dirt:=20 dirt_seed:=3
+```
+
+The extension targets `mujoco_ros2_control` 0.1.4 or newer and launches that package's modified
+`ros2_control_node`. `diff_drive_controller` drives the wheels in both odometry modes.
+`odom_source:=ground_truth` publishes the simulated body pose on `/odom` and supplies the
+transform used by the camera labeller. `odom_source:=robot_wheels` gives wheel odometry
+ownership of `/odom` and exposes the body pose on `/odom_truth` for comparison. Use ground
+truth for labelled dataset collection.
+
+MuJoCo supports the checked-in `living_room.world` and uses compound primitives for furniture
+that has mesh collisions in Gazebo. The RGB camera runs when requested with `cameras:=true`,
+`detector:=true`, `reclean_source:=vision`, or `collect_dataset:=true`. Both backends use the
+same dirt generator, seed, map and brush model. This backend is for simulation. Hardware
+performance and transfer from simulated images have yet to be evaluated.
 
 ## Coverage and the re-clean loop
 

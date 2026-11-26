@@ -41,7 +41,7 @@ import os
 
 from ament_index_python.packages import get_package_prefix, get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import (DeclareLaunchArgument, EmitEvent, IncludeLaunchDescription,
+from launch.actions import (DeclareLaunchArgument, EmitEvent, IncludeLaunchDescription, OpaqueFunction,
                             RegisterEventHandler, TimerAction)
 from launch.event_handlers import OnProcessExit
 from launch.events import Shutdown
@@ -81,13 +81,12 @@ def generate_launch_description():
             PythonLaunchDescriptionSource(os.path.join(pkg_share, 'launch', launch_file)),
             launch_arguments=args)
 
-    sim = include(gazebo_share, 'sim.launch.py', {
+    sim_args = {
         'headless': LaunchConfiguration('headless'),
         'world': LaunchConfiguration('world'),
         'x_pose': LaunchConfiguration('x_pose'),
         'y_pose': LaunchConfiguration('y_pose'),
         'odom_source': LaunchConfiguration('odom_source'),
-        'qt_platform': LaunchConfiguration('qt_platform'),
         'dirt': LaunchConfiguration('dirt'),
         'dirt_seed': LaunchConfiguration('dirt_seed'),
         'dirt_map': LaunchConfiguration('dirt_map'),
@@ -102,13 +101,24 @@ def generate_launch_description():
             LaunchConfiguration('collect_dataset'), "' == 'true' or '",
             LaunchConfiguration('detector'), "' == 'true' or '",
             LaunchConfiguration('reclean_source'), "' == 'vision' else 'false'"]),
-    }.items())
+    }
+
+    gazebo_sim = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(os.path.join(gazebo_share, 'launch', 'sim.launch.py')),
+        launch_arguments={**sim_args, 'qt_platform': LaunchConfiguration('qt_platform')}.items(),
+        condition=LaunchConfigurationEquals('sim', 'gazebo'))
+
+    def launch_mujoco(context):
+        return [include(get_package_share_directory('vacuum_mujoco'),
+                        'sim.launch.py', sim_args.items())]
 
     # the brush: takes dirt off the floor as the robot drives over it (only when there is dirt)
     dirt_cleaner = Node(
         package='vacuum_gazebo', executable='dirt_cleaner.py', name='dirt_cleaner', output='screen',
         parameters=[{
             'use_sim_time': True,
+            'remove_in_gazebo': ParameterValue(PythonExpression([
+                "'", LaunchConfiguration('sim'), "' == 'gazebo'"]), value_type=bool),
             'layout': [LaunchConfiguration('dirt_dir'), TextSubstitution(text='/current_layout.json')],
             'clean_radius': ParameterValue(LaunchConfiguration('dirt_brush'), value_type=float),
         }],
@@ -142,6 +152,8 @@ def generate_launch_description():
     }.items())
 
     return LaunchDescription([
+        DeclareLaunchArgument('sim', default_value='gazebo', choices=['gazebo', 'mujoco'],
+                              description='Physics simulator backend'),
         DeclareLaunchArgument('slam', default_value='False', choices=['True', 'False'],
                               description='False: AMCL on `map`. True: map while driving.'),
         DeclareLaunchArgument(
@@ -195,7 +207,9 @@ def generate_launch_description():
                               description='begin cleaning once Nav2 and the robot pose are ready'),
         DeclareLaunchArgument('nav_delay', default_value='8.0',
                               description='seconds to let Gazebo come up before Nav2 starts'),
-        sim,
+        gazebo_sim,
+        OpaqueFunction(function=launch_mujoco,
+                       condition=LaunchConfigurationEquals('sim', 'mujoco')),
         # Nav2 needs /clock, /scan and the odom TF, which appear a few seconds after start
         TimerAction(period=LaunchConfiguration('nav_delay'), actions=[navigation]),
         TimerAction(period=LaunchConfiguration('nav_delay'), actions=[dirt_cleaner]),
