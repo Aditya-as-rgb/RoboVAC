@@ -11,6 +11,8 @@ trimmed worlds/models):
   - makerspet/oomwoo_gazebo       living_room world, models, map, launch file
   - makerspet/oomwoo-ros2-tools   oomwoo_bringup navigation launch file
 
+The RoboVAC MuJoCo scene also derives its dimensions and layout from these descriptions.
+
   Copyright 2023-2025 KAIA.AI
   https://github.com/makerspet/oomwoo
 

@@ -1,0 +1,4 @@
+<library path="vacuum_mujoco_sensors">
+  <class name="vacuum_mujoco/Sensors" type="vacuum_mujoco::Sensors"
+         base_class_type="mujoco_ros2_control_plugins::MuJoCoROS2ControlPluginBase"/>
+</library>

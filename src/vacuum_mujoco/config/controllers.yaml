@@ -1,0 +1,23 @@
+controller_manager:
+  ros__parameters:
+    update_rate: 100
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+    vacuum_drive:
+      type: diff_drive_controller/DiffDriveController
+
+vacuum_drive:
+  ros__parameters:
+    left_wheel_names: [wheel_left_joint]
+    right_wheel_names: [wheel_right_joint]
+    wheel_separation: 0.235
+    wheel_radius: 0.034
+    odom_frame_id: odom
+    base_frame_id: base_footprint
+    tf_frame_prefix_enable: false
+    publish_rate: 50.0
+    cmd_vel_timeout: 0.5
+    linear.x.max_velocity: 0.5
+    linear.x.min_velocity: -0.5
+    linear.x.max_acceleration: 1.0
+    linear.x.min_acceleration: -1.0

@@ -1,0 +1,127 @@
+<mujoco model="RoboVAC">
+  <compiler angle="radian"/>
+  <option timestep="0.002" integrator="implicitfast"/>
+  <visual>
+    <global offwidth="640" offheight="480"/>
+    <map znear="0.002" zfar="4"/>
+  </visual>
+  <default>
+    <geom friction="0.8 0.005 0.0001"/>
+    <default class="wheel">
+      <geom group="1" type="cylinder" size="0.034 0.006" mass="0.100" rgba="0.18 0.14 0.14 1"
+            quat="0.70710678 -0.70710678 0 0" friction="1.2 0.005 0.0001"/>
+      <joint type="hinge" axis="0 1 0" damping="0.001"/>
+    </default>
+    <default class="bumper">
+      <geom type="box" size="0.005 0.013125 0.03325" mass="0" rgba="0.12 0.13 0.14 1"/>
+    </default>
+    <default class="dirt">
+      <geom contype="0" conaffinity="0" group="2"/>
+    </default>
+  </default>
+  <worldbody>
+    <body name="vacuum" pos="-2 -0.5 0">
+      <freejoint name="vacuum_root"/>
+      <geom name="chassis" type="cylinder" size="0.172 0.03325" pos="0 0 0.04575"
+            mass="2.500" rgba="0.33 0.35 0.37 1"/>
+      <geom name="bumper_left_0" class="bumper" pos="0.1686382 0.0110531 .04575" euler="0 0 0.0654498"/>
+      <site name="bumper_left_0" type="box" size=".006 .014 .034" pos="0.1686382 0.0110531 .04575" euler="0 0 0.0654498" rgba="0 0 0 0"/>
+      <geom name="bumper_left_1" class="bumper" pos="0.1657527 0.0329703 .04575" euler="0 0 0.1963495"/>
+      <site name="bumper_left_1" type="box" size=".006 .014 .034" pos="0.1657527 0.0329703 .04575" euler="0 0 0.1963495" rgba="0 0 0 0"/>
+      <geom name="bumper_left_2" class="bumper" pos="0.1600312 0.0543233 .04575" euler="0 0 0.3272492"/>
+      <site name="bumper_left_2" type="box" size=".006 .014 .034" pos="0.1600312 0.0543233 .04575" euler="0 0 0.3272492" rgba="0 0 0 0"/>
+      <geom name="bumper_left_3" class="bumper" pos="0.1515715 0.0747468 .04575" euler="0 0 0.4581489"/>
+      <site name="bumper_left_3" type="box" size=".006 .014 .034" pos="0.1515715 0.0747468 .04575" euler="0 0 0.4581489" rgba="0 0 0 0"/>
+      <geom name="bumper_left_4" class="bumper" pos="0.1405184 0.0938914 .04575" euler="0 0 0.5890486"/>
+      <site name="bumper_left_4" type="box" size=".006 .014 .034" pos="0.1405184 0.0938914 .04575" euler="0 0 0.5890486" rgba="0 0 0 0"/>
+      <geom name="bumper_left_5" class="bumper" pos="0.1270609 0.1114294 .04575" euler="0 0 0.7199483"/>
+      <site name="bumper_left_5" type="box" size=".006 .014 .034" pos="0.1270609 0.1114294 .04575" euler="0 0 0.7199483" rgba="0 0 0 0"/>
+      <geom name="bumper_left_6" class="bumper" pos="0.1114294 0.1270609 .04575" euler="0 0 0.8508480"/>
+      <site name="bumper_left_6" type="box" size=".006 .014 .034" pos="0.1114294 0.1270609 .04575" euler="0 0 0.8508480" rgba="0 0 0 0"/>
+      <geom name="bumper_left_7" class="bumper" pos="0.0938914 0.1405184 .04575" euler="0 0 0.9817477"/>
+      <site name="bumper_left_7" type="box" size=".006 .014 .034" pos="0.0938914 0.1405184 .04575" euler="0 0 0.9817477" rgba="0 0 0 0"/>
+      <geom name="bumper_left_8" class="bumper" pos="0.0747468 0.1515715 .04575" euler="0 0 1.1126474"/>
+      <site name="bumper_left_8" type="box" size=".006 .014 .034" pos="0.0747468 0.1515715 .04575" euler="0 0 1.1126474" rgba="0 0 0 0"/>
+      <geom name="bumper_left_9" class="bumper" pos="0.0543233 0.1600312 .04575" euler="0 0 1.2435471"/>
+      <site name="bumper_left_9" type="box" size=".006 .014 .034" pos="0.0543233 0.1600312 .04575" euler="0 0 1.2435471" rgba="0 0 0 0"/>
+      <geom name="bumper_left_10" class="bumper" pos="0.0329703 0.1657527 .04575" euler="0 0 1.3744468"/>
+      <site name="bumper_left_10" type="box" size=".006 .014 .034" pos="0.0329703 0.1657527 .04575" euler="0 0 1.3744468" rgba="0 0 0 0"/>
+      <geom name="bumper_left_11" class="bumper" pos="0.0110531 0.1686382 .04575" euler="0 0 1.5053465"/>
+      <site name="bumper_left_11" type="box" size=".006 .014 .034" pos="0.0110531 0.1686382 .04575" euler="0 0 1.5053465" rgba="0 0 0 0"/>
+      <geom name="bumper_right_0" class="bumper" pos="0.0110531 -0.1686382 .04575" euler="0 0 -1.5053465"/>
+      <site name="bumper_right_0" type="box" size=".006 .014 .034" pos="0.0110531 -0.1686382 .04575" euler="0 0 -1.5053465" rgba="0 0 0 0"/>
+      <geom name="bumper_right_1" class="bumper" pos="0.0329703 -0.1657527 .04575" euler="0 0 -1.3744468"/>
+      <site name="bumper_right_1" type="box" size=".006 .014 .034" pos="0.0329703 -0.1657527 .04575" euler="0 0 -1.3744468" rgba="0 0 0 0"/>
+      <geom name="bumper_right_2" class="bumper" pos="0.0543233 -0.1600312 .04575" euler="0 0 -1.2435471"/>
+      <site name="bumper_right_2" type="box" size=".006 .014 .034" pos="0.0543233 -0.1600312 .04575" euler="0 0 -1.2435471" rgba="0 0 0 0"/>
+      <geom name="bumper_right_3" class="bumper" pos="0.0747468 -0.1515715 .04575" euler="0 0 -1.1126474"/>
+      <site name="bumper_right_3" type="box" size=".006 .014 .034" pos="0.0747468 -0.1515715 .04575" euler="0 0 -1.1126474" rgba="0 0 0 0"/>
+      <geom name="bumper_right_4" class="bumper" pos="0.0938914 -0.1405184 .04575" euler="0 0 -0.9817477"/>
+      <site name="bumper_right_4" type="box" size=".006 .014 .034" pos="0.0938914 -0.1405184 .04575" euler="0 0 -0.9817477" rgba="0 0 0 0"/>
+      <geom name="bumper_right_5" class="bumper" pos="0.1114294 -0.1270609 .04575" euler="0 0 -0.8508480"/>
+      <site name="bumper_right_5" type="box" size=".006 .014 .034" pos="0.1114294 -0.1270609 .04575" euler="0 0 -0.8508480" rgba="0 0 0 0"/>
+      <geom name="bumper_right_6" class="bumper" pos="0.1270609 -0.1114294 .04575" euler="0 0 -0.7199483"/>
+      <site name="bumper_right_6" type="box" size=".006 .014 .034" pos="0.1270609 -0.1114294 .04575" euler="0 0 -0.7199483" rgba="0 0 0 0"/>
+      <geom name="bumper_right_7" class="bumper" pos="0.1405184 -0.0938914 .04575" euler="0 0 -0.5890486"/>
+      <site name="bumper_right_7" type="box" size=".006 .014 .034" pos="0.1405184 -0.0938914 .04575" euler="0 0 -0.5890486" rgba="0 0 0 0"/>
+      <geom name="bumper_right_8" class="bumper" pos="0.1515715 -0.0747468 .04575" euler="0 0 -0.4581489"/>
+      <site name="bumper_right_8" type="box" size=".006 .014 .034" pos="0.1515715 -0.0747468 .04575" euler="0 0 -0.4581489" rgba="0 0 0 0"/>
+      <geom name="bumper_right_9" class="bumper" pos="0.1600312 -0.0543233 .04575" euler="0 0 -0.3272492"/>
+      <site name="bumper_right_9" type="box" size=".006 .014 .034" pos="0.1600312 -0.0543233 .04575" euler="0 0 -0.3272492" rgba="0 0 0 0"/>
+      <geom name="bumper_right_10" class="bumper" pos="0.1657527 -0.0329703 .04575" euler="0 0 -0.1963495"/>
+      <site name="bumper_right_10" type="box" size=".006 .014 .034" pos="0.1657527 -0.0329703 .04575" euler="0 0 -0.1963495" rgba="0 0 0 0"/>
+      <geom name="bumper_right_11" class="bumper" pos="0.1686382 -0.0110531 .04575" euler="0 0 -0.0654498"/>
+      <site name="bumper_right_11" type="box" size=".006 .014 .034" pos="0.1686382 -0.0110531 .04575" euler="0 0 -0.0654498" rgba="0 0 0 0"/>
+      <geom name="caster" type="sphere" size="0.0125" pos="0.1445 0 0.0125"
+            mass="0.050" priority="1" friction="0 0 0" rgba="0.2 0.2 0.2 1"/>
+      <geom name="lidar_puck" type="cylinder" size="0.0415 0.009" pos="0.0745 0 0.088"
+            mass="0.150" rgba="0.09 0.09 0.09 1"/>
+      <site name="base_scan" pos="0.0745 0 0.088" size="0.001" rgba="0 0 0 0"/>
+      <site name="imu_link" pos="0 0 0.04575" size="0.001" rgba="0 0 0 0"/>
+      <!-- Camera X is image right, Y is image up, and it looks along -Z. -->
+      <camera name="floor" pos="0.1745 0 0.071" xyaxes="0 -1 0 0.609994 0 0.792406"
+              fovy="104.821821" resolution="640 480"/>
+      <body name="wheel_left_link" pos="0 0.1175 0.034" childclass="wheel">
+        <joint name="wheel_left_joint"/>
+        <geom name="wheel_left"/>
+      </body>
+      <body name="wheel_right_link" pos="0 -0.1175 0.034" childclass="wheel">
+        <joint name="wheel_right_joint"/>
+        <geom name="wheel_right"/>
+      </body>
+    </body>
+  </worldbody>
+  <actuator>
+    <velocity name="wheel_left_joint" joint="wheel_left_joint" kv="0.3" forcerange="-0.5 0.5"/>
+    <velocity name="wheel_right_joint" joint="wheel_right_joint" kv="0.3" forcerange="-0.5 0.5"/>
+  </actuator>
+  <sensor>
+    <accelerometer name="accelerometer" site="imu_link"/>
+    <gyro name="gyroscope" site="imu_link"/>
+    <framequat name="attitude" objtype="site" objname="imu_link"/>
+    <touch name="bumper_left_0" site="bumper_left_0"/>
+    <touch name="bumper_left_1" site="bumper_left_1"/>
+    <touch name="bumper_left_2" site="bumper_left_2"/>
+    <touch name="bumper_left_3" site="bumper_left_3"/>
+    <touch name="bumper_left_4" site="bumper_left_4"/>
+    <touch name="bumper_left_5" site="bumper_left_5"/>
+    <touch name="bumper_left_6" site="bumper_left_6"/>
+    <touch name="bumper_left_7" site="bumper_left_7"/>
+    <touch name="bumper_left_8" site="bumper_left_8"/>
+    <touch name="bumper_left_9" site="bumper_left_9"/>
+    <touch name="bumper_left_10" site="bumper_left_10"/>
+    <touch name="bumper_left_11" site="bumper_left_11"/>
+    <touch name="bumper_right_0" site="bumper_right_0"/>
+    <touch name="bumper_right_1" site="bumper_right_1"/>
+    <touch name="bumper_right_2" site="bumper_right_2"/>
+    <touch name="bumper_right_3" site="bumper_right_3"/>
+    <touch name="bumper_right_4" site="bumper_right_4"/>
+    <touch name="bumper_right_5" site="bumper_right_5"/>
+    <touch name="bumper_right_6" site="bumper_right_6"/>
+    <touch name="bumper_right_7" site="bumper_right_7"/>
+    <touch name="bumper_right_8" site="bumper_right_8"/>
+    <touch name="bumper_right_9" site="bumper_right_9"/>
+    <touch name="bumper_right_10" site="bumper_right_10"/>
+    <touch name="bumper_right_11" site="bumper_right_11"/>
+  </sensor>
+</mujoco>

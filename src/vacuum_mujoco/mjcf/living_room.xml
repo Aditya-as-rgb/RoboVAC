@@ -1,0 +1,74 @@
+<mujoco model="RoboVAC living room">
+  <!-- World and furniture poses follow vacuum_gazebo/worlds/living_room.world.
+       Mesh furniture uses a compound of simple collision shapes to preserve
+       gaps at the floor, especially around the chair and under the table. -->
+  <worldbody>
+    <light name="room_light" pos="0 0 6" dir="0 0 -1" directional="true"
+           ambient=".42 .40 .36" diffuse=".55 .55 .55"/>
+    <geom name="floor" type="plane" size="3 3 .1" rgba=".58 .45 .32 1"/>
+    <geom name="wall_west" type="box" pos="-2.5 0 1" size=".05 2.5 1" rgba=".82 .79 .74 1"/>
+    <geom name="wall_east" type="box" pos="2.5 0 1" size=".05 2.5 1" rgba=".82 .79 .74 1"/>
+    <geom name="wall_north" type="box" pos="0 2.45 1" size="2.5 .05 1" rgba=".82 .79 .74 1"/>
+    <geom name="wall_south" type="box" pos="0 -2.45 1" size="2.5 .05 1" rgba=".82 .79 .74 1"/>
+    <geom name="door" type="box" pos="-2.444 -1.2 1" size=".002 .40 1"
+          contype="0" conaffinity="0" group="2" rgba=".55 .39 .24 1"/>
+    <geom name="rug" type="box" pos="0 .15 -.001" size="1 .8 .003"
+          contype="0" conaffinity="0" group="2" rgba=".83 .78 .68 1"/>
+    <body name="cabinet" pos="2.21 2.17 0" euler="0 0 1.5707">
+      <geom type="box" pos="0 0 .01" size=".225 .225 .01" rgba=".50 .34 .19 1"/>
+      <geom type="box" pos=".235 0 .51" size=".01 .225 .51" rgba=".50 .34 .19 1"/>
+      <geom type="box" pos="0 .235 .51" size=".225 .01 .51" rgba=".50 .34 .19 1"/>
+      <geom type="box" pos="0 -.235 .51" size=".225 .01 .51" rgba=".50 .34 .19 1"/>
+      <geom type="box" pos="0 0 .51" size=".225 .225 .01" rgba=".50 .34 .19 1"/>
+      <geom type="box" pos="0 0 1.01" size=".225 .225 .01" rgba=".50 .34 .19 1"/>
+    </body>
+    <body name="bookshelf" pos="-2 2.4 0">
+      <geom type="box" pos="0 .005 .6" size=".45 .005 .6" rgba=".45 .28 .16 1"/>
+      <geom type="box" pos=".45 -.195 .6" size=".01 .20 .6" rgba=".45 .28 .16 1"/>
+      <geom type="box" pos="-.45 -.195 .6" size=".01 .20 .6" rgba=".45 .28 .16 1"/>
+      <geom type="box" pos="0 -.195 .03" size=".44 .20 .03" rgba=".45 .28 .16 1"/>
+      <geom type="box" pos="0 -.195 .43" size=".44 .20 .01" rgba=".45 .28 .16 1"/>
+      <geom type="box" pos="0 -.195 .8" size=".44 .20 .01" rgba=".45 .28 .16 1"/>
+      <geom type="box" pos="0 -.195 1.19" size=".44 .20 .01" rgba=".45 .28 .16 1"/>
+    </body>
+    <body name="armchair" pos="-1 .1 0">
+      <geom type="box" pos="0 -.002 .19" size=".343 .36 .16" rgba=".44 .47 .50 1"/>
+      <geom type="box" pos="-.27 0 .56" size=".073 .36 .403" rgba=".44 .47 .50 1"/>
+      <geom type="box" pos=".01 -.32 .42" size=".28 .04 .20" rgba=".44 .47 .50 1"/>
+      <geom type="box" pos=".01 .32 .42" size=".28 .04 .20" rgba=".44 .47 .50 1"/>
+    </body>
+    <body name="sofa" pos=".394 -1.2 0">
+      <geom type="box" pos="0 0 .215" size=".9 .52 .185" rgba=".38 .43 .48 1"/>
+      <geom type="box" pos="0 -.43 .59" size=".9 .09 .35" rgba=".38 .43 .48 1"/>
+      <geom type="box" pos="-.81 0 .45" size=".09 .52 .18" rgba=".38 .43 .48 1"/>
+      <geom type="box" pos=".81 0 .45" size=".09 .52 .18" rgba=".38 .43 .48 1"/>
+    </body>
+    <body name="chair" pos=".9 .1 0" euler="0 0 -1.570895">
+      <geom type="box" pos="0 .01 .44" size=".28 .23 .04" rgba=".45 .30 .19 1"/>
+      <geom type="box" pos="0 .24 .64" size=".28 .035 .177" rgba=".45 .30 .19 1"/>
+      <geom type="box" pos="-.24 -.18 .21" size=".025 .025 .21" rgba=".34 .23 .16 1"/>
+      <geom type="box" pos=".24 -.18 .21" size=".025 .025 .21" rgba=".34 .23 .16 1"/>
+      <geom type="box" pos="-.24 .21 .21" size=".025 .025 .21" rgba=".34 .23 .16 1"/>
+      <geom type="box" pos=".24 .21 .21" size=".025 .025 .21" rgba=".34 .23 .16 1"/>
+    </body>
+    <body name="lamp" pos="-1 -1 0">
+      <geom type="cylinder" pos="0 0 .035" size=".261 .035" rgba=".27 .22 .17 1"/>
+      <geom type="cylinder" pos="0 0 .43" size=".035 .40" rgba=".27 .22 .17 1"/>
+      <geom type="cylinder" pos="0 0 .88" size=".26 .14" rgba=".78 .68 .52 1"/>
+    </body>
+    <body name="table" pos="0 .1 0" euler="0 0 1.5708">
+      <geom type="box" pos="0 0 .29" size=".24 .575 .026" rgba=".76 .73 .66 1"/>
+      <geom type="box" pos=".155 -.44 .134" size=".038 .04 .134" rgba=".34 .28 .24 1"/>
+      <geom type="box" pos="-.155 -.44 .134" size=".038 .04 .134" rgba=".34 .28 .24 1"/>
+      <geom type="box" pos=".155 .44 .134" size=".038 .04 .134" rgba=".34 .28 .24 1"/>
+      <geom type="box" pos="-.155 .44 .134" size=".038 .04 .134" rgba=".34 .28 .24 1"/>
+    </body>
+    <body name="tv_stand" pos="0 2.2 0">
+      <geom type="box" pos="0 0 .225" size=".8 .22 .225" rgba=".42 .27 .16 1"/>
+      <geom type="box" pos="0 .19 .9" size=".73 .025 .41" rgba=".10 .10 .12 1"/>
+    </body>
+    <geom name="red_ball" type="sphere" pos="1 1.25 .127" size=".127" rgba=".74 .09 .06 1"/>
+    <geom name="decor_vase" type="cylinder" pos="-1.87443 2.2 .207" size=".108 .148" rgba=".36 .20 .17 1"/>
+    <geom name="decor_vase_tall" type="cylinder" pos="-2.24886 2.15 .178" size=".055 .118" rgba=".56 .42 .26 1"/>
+  </worldbody>
+</mujoco>
