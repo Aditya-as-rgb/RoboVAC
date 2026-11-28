@@ -313,27 +313,52 @@ env -u PYTHONPATH python -m pip install './vacuum_rl[train,test]'
 env -u PYTHONPATH python -m pytest vacuum_rl/tests -q
 env -u PYTHONPATH python -m vacuum_rl.experiment train --output /tmp/robovac-policy --seed 42 --steps 32768
 env -u PYTHONPATH python -m vacuum_rl.experiment evaluate --model /tmp/robovac-policy.zip \
-  --output /tmp/robovac-rl-eval --first-seed 10000 --count 64
+  --output /tmp/robovac-rl-eval --first-seed 10000 --count 64 --threshold 0.4
 ```
 
-The run trained masked PPO for 32,768 steps on layouts drawn from seeds 0–511. Each policy
-used the same 64 held-out seeds (10000–10063), 25 starting dirt patches, and a 75-second
-re-clean budget. The greedy baseline executes the existing map-gap set cover's ordered
-targets within the budget. The oracle has perfect detections and prioritizes brush progress
-per second. The random policy samples uniformly among valid spots and stop. Values are
-mean ± sample standard deviation.
+Use `--model vacuum_rl/results/policy.zip` to evaluate the checked-in checkpoint. Omit
+`--model` to run the six baselines with the base package and no PyTorch dependency.
+Evaluation requires at least two seeds starting at 512 or later.
 
-| Policy | Dirt left (patches) | Extra time (s) | Extra distance (m) | False re-cleans |
-|---|---:|---:|---:|---:|
-| No re-clean | 3.86 ± 1.82 | 0.00 ± 0.00 | 0.00 ± 0.00 | 0.00 ± 0.00 |
-| Greedy set cover | 3.19 ± 1.66 | 70.67 ± 0.00 | 16.17 ± 0.00 | 11.80 ± 0.41 |
-| Perfect-detection oracle | 0.02 ± 0.13 | 38.68 ± 17.27 | 9.18 ± 4.14 | 0.00 ± 0.00 |
-| Random | 2.25 ± 1.70 | 32.68 ± 27.57 | 7.78 ± 6.58 | 1.73 ± 2.37 |
-| Masked PPO | 1.33 ± 1.18 | 38.99 ± 18.25 | 9.27 ± 4.35 | 1.39 ± 1.64 |
+- **Greedy set cover** follows the existing map-gap planner's ordered targets within the budget.
+- **Nearest-first heuristic** visits the nearest valid, unvisited detection at or above
+  `--threshold` (default `0.4`). It stops when no candidate qualifies.
+- **Detector-limited oracle** uses the same noisy detections as the heuristic and PPO.
+  It reads the simulator's hidden dirt state to choose the spot with the most attainable
+  brush progress per second. The **perfect-detection oracle** uses the same selection rule
+  with perfect detections. Both oracles choose one action at a time.
+- **Random** samples uniformly among valid spots and stop. **No re-clean** stops immediately.
 
-The trained checkpoint, aggregate statistics, and all per-seed rows are in
-[`vacuum_rl/results/`](vacuum_rl/results/). These results cover the living-room grid and
-the simulated detector. The PPO policy has yet to be tested in Gazebo, MuJoCo, or on hardware.
+The evaluator writes `episodes.csv` and `summary.json` to `--output`. The summary reports
+means and sample standard deviations for dirt left, fraction of post-sweep dirt removed,
+extra time, extra distance, false re-cleans, and reward. The removed fraction is averaged
+over episodes with dirt left after the sweep. For dirt left, extra time, false re-cleans,
+and reward, it also reports the mean difference (policy minus heuristic) and a 95% confidence
+interval from 4,000 bootstrap resamples of the paired seeds.
+
+The checked-in checkpoint was trained for 32,768 steps on layouts drawn from seeds 0–511.
+Each policy was evaluated on the same 64 held-out seeds (10000–10063), with 25 starting dirt
+patches and a 75-second re-clean budget. Values are mean ± sample standard deviation.
+
+| Policy | Dirt left (patches) | Post-sweep dirt removed | Extra time (s) | Extra distance (m) | False re-cleans | Reward |
+|---|---:|---:|---:|---:|---:|---:|
+| No re-clean | 3.86 ± 1.82 | 0.00 ± 0.00 | 0.00 ± 0.00 | 0.00 ± 0.00 | 0.00 ± 0.00 | 0.00 ± 0.00 |
+| Greedy set cover | 3.19 ± 1.66 | 0.17 ± 0.21 | 70.67 ± 0.00 | 16.17 ± 0.00 | 11.80 ± 0.41 | −3.69 ± 1.31 |
+| Nearest-first heuristic | 1.05 ± 0.95 | 0.74 ± 0.23 | 32.54 ± 16.41 | 7.74 ± 3.91 | 0.36 ± 0.70 | 3.99 ± 2.29 |
+| Detector-limited oracle | 0.91 ± 0.94 | 0.78 ± 0.20 | 31.73 ± 15.71 | 7.54 ± 3.75 | 0.00 ± 0.00 | 4.35 ± 2.50 |
+| Perfect-detection oracle | 0.02 ± 0.12 | 1.00 ± 0.03 | 38.68 ± 17.27 | 9.18 ± 4.14 | 0.00 ± 0.00 | 5.73 ± 2.88 |
+| Random | 2.25 ± 1.70 | 0.43 ± 0.30 | 32.68 ± 27.57 | 7.78 ± 6.58 | 1.73 ± 2.37 | 1.55 ± 1.81 |
+| Masked PPO | 1.33 ± 1.18 | 0.68 ± 0.25 | 38.99 ± 18.25 | 9.27 ± 4.35 | 1.39 ± 1.64 | 3.08 ± 2.04 |
+
+Compared with the nearest-first heuristic, masked PPO left 0.28 more patches on average
+(95% CI 0.08 to 0.48), took 6.45 s longer (4.43 to 8.47), made 1.03 more false re-cleans
+(0.73 to 1.34), and earned 0.91 less reward (0.52 to 1.31 less). The detector-limited oracle
+left 0.14 fewer patches than the heuristic (0.02 to 0.28 fewer).
+
+[`vacuum_rl/results/`](vacuum_rl/results/) contains the trained checkpoint and the original
+five-policy evaluation. Running the command above with that checkpoint regenerates the
+seven-policy comparison. These results cover the living-room grid and the simulated
+detector. The PPO policy has yet to be tested in Gazebo, MuJoCo, or on hardware.
 
 ## Control panel (`vacuum_gui`)
 
