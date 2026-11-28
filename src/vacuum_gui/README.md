@@ -127,7 +127,7 @@ touching Gazebo:
 
 | Live switch | runs | stop |
 |---|---|---|
-| gamepad | `ros2 launch vacuum_teleop teleop_joy.launch.py` | SIGINT the group |
+| gamepad | `ros2 launch vacuum_teleop teleop_joy.launch.py` | SIGINT |
 | detector | `ros2 launch vacuum_vision detector.launch.py` | SIGINT |
 | mission + meter | `ros2 launch vacuum_coverage coverage.launch.py` (with a generated params file when re-clean is off) | SIGINT |
 | recording | `ros2 run vacuum_gazebo dirt_dataset.py` | SIGINT |

@@ -45,7 +45,11 @@ public:
     ground_truth_ = truth.as_bool();
     odom_pub_ = node_->create_publisher<nav_msgs::msg::Odometry>(
       ground_truth_ ? "/odom" : "/odom_truth", 10);
-    tf_ = std::make_unique<tf2_ros::TransformBroadcaster>(node_);
+    if (ground_truth_) {
+      // Match odometry's queue depth so TF doesn't carry seconds of old poses under load.
+      tf_ = std::make_unique<tf2_ros::TransformBroadcaster>(
+        node_, tf2_ros::DynamicBroadcasterQoS(10));
+    }
     scan_pub_ = node_->create_publisher<sensor_msgs::msg::LaserScan>("/scan", 10);
     imu_pub_ = node_->create_publisher<sensor_msgs::msg::Imu>("/imu", 10);
     for (size_t i = 0; i < bumpers_.size(); ++i) {

@@ -143,6 +143,7 @@ def generate_launch_description():
         target_action=dataset, on_exit=[EmitEvent(event=Shutdown(reason='dataset episode finished'))]))
 
     navigation = include(bringup_share, 'navigation.launch.py', {
+        'sim': LaunchConfiguration('sim'),
         'slam': LaunchConfiguration('slam'),
         'map': LaunchConfiguration('map'),
         'rviz': LaunchConfiguration('rviz'),

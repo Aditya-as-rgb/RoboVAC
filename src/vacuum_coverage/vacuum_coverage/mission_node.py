@@ -60,6 +60,7 @@ class CoverageMission(Node):
         self.declare_parameter('autostart', False)
         self.declare_parameter('autostart_delay', 5.0)
         self.declare_parameter('max_retries', 2)
+        self.declare_parameter('retry_delay', 1.0)
         self.declare_parameter('wait_nav2', True)
         # clean-up pass: after the main run, drive to the spots that are still dirty
         self.declare_parameter('reclean', True)
@@ -334,6 +335,7 @@ class CoverageMission(Node):
                 plan, self._navigate, self._follow, self._robot_pose,
                 log=lambda m: self.get_logger().info(m), status=self._say,
                 max_retries=int(self.get_parameter('max_retries').value),
+                retry_delay=float(self.get_parameter('retry_delay').value),
                 reclean=self._reclean_plan if do_reclean else None,
                 reclean_passes=int(self.get_parameter('reclean_passes').value),
                 pass_done=self._pass_done, clock=self._now)

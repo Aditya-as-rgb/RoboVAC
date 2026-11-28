@@ -90,6 +90,24 @@ def test_unreachable_piece_is_skipped():
     assert res.pieces[0].status == 'skipped' and res.pieces[1].status == 'done'
 
 
+def test_transit_retry_wait_is_cancellable(monkeypatch):
+    robot = FakeRobot(pose=(5.0, 5.0, 0.0), fail_navigate=1)
+    r = runner(robot, make_plan(1), retry_delay=1.0)
+    waits = []
+
+    def wait_for_cancel(delay):
+        waits.append(delay)
+        if delay:
+            r.cancel()
+        return r.cancelled
+
+    monkeypatch.setattr(r._cancel, 'wait', wait_for_cancel)
+    result = r.run()
+    assert waits == [0.0, 1.0]
+    assert result.cancelled
+    assert len(robot.calls) == 1
+
+
 def test_cancel_stops_between_pieces():
     plan = make_plan(3)
     robot = FakeRobot()

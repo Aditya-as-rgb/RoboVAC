@@ -38,7 +38,7 @@ def default_map(gazebo_share, name='living_room.yaml'):
     return os.path.join(gazebo_share, 'maps', name)
 
 
-def rewrite_initial_pose(params_path, x, y):
+def rewrite_initial_pose(params_path, x, y, *, mujoco_defaults=False):
     """Copy of the Nav2 params file whose AMCL ``initial_pose`` is (x, y).
 
     ``navigation.yaml`` seeds AMCL at the default spawn pose. When the robot is spawned
@@ -54,6 +54,9 @@ def rewrite_initial_pose(params_path, x, y):
         return params_path
     initial['x'] = float(x)
     initial['y'] = float(y)
+    if mujoco_defaults:
+        # Give the next simulated odometry sample time to reach the motion correction lookup.
+        data['collision_monitor']['ros__parameters']['transform_tolerance'] = 0.25
     fd, out_path = tempfile.mkstemp(prefix='vacuum_nav2_', suffix='.yaml')
     with os.fdopen(fd, 'w') as f:
         yaml.safe_dump(data, f, sort_keys=False)
@@ -64,6 +67,7 @@ def generate_launch_description():
     bringup_share = get_package_share_directory('vacuum_bringup')
     gazebo_share = get_package_share_directory('vacuum_gazebo')
     nav2_share = get_package_share_directory('nav2_bringup')
+    default_params = os.path.join(bringup_share, 'config', 'navigation.yaml')
 
     use_sim_time = LaunchConfiguration('use_sim_time')
     slam = LaunchConfiguration('slam')
@@ -73,10 +77,16 @@ def generate_launch_description():
     rviz_config = LaunchConfiguration('rviz_config')
 
     def include_nav2(context, *_args, **_kwargs):
+        params_path = params_file.perform(context)
+        mujoco_defaults = (
+            LaunchConfiguration('sim').perform(context) == 'mujoco'
+            and params_path == default_params
+        )
         params = rewrite_initial_pose(
-            context.perform_substitution(params_file),
+            params_path,
             context.perform_substitution(LaunchConfiguration('x_pose')),
-            context.perform_substitution(LaunchConfiguration('y_pose')))
+            context.perform_substitution(LaunchConfiguration('y_pose')),
+            mujoco_defaults=mujoco_defaults)
         return [IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(nav2_share, 'launch', 'bringup_launch.py')),
@@ -110,8 +120,9 @@ def generate_launch_description():
             description='Map yaml, used only when slam:=False'),
         DeclareLaunchArgument(
             'params_file',
-            default_value=os.path.join(bringup_share, 'config', 'navigation.yaml'),
+            default_value=default_params,
             description='Nav2 (+ AMCL) parameters'),
+        DeclareLaunchArgument('sim', default_value='gazebo', choices=['gazebo', 'mujoco']),
         DeclareLaunchArgument('x_pose', default_value='-2.0',
                               description='spawn x of the robot; AMCL starts here'),
         DeclareLaunchArgument('y_pose', default_value='-0.5',

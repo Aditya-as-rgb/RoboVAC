@@ -88,6 +88,34 @@ def test_stop_signals_the_whole_process_group_so_children_die():
     assert wait_until(lambda: not is_alive(child_pid), timeout=5.0)
 
 
+def test_ros2_launch_forwards_one_sigint_to_its_children(tmp_path):
+    launcher = tmp_path / 'ros2'
+    launcher.write_text(
+        '#!' + sys.executable + '\n'
+        'import signal, subprocess, sys, time\n'
+        'child = subprocess.Popen([sys.executable, "-u", "-c", '
+        '"import signal, time\\n'
+        'def interrupted(*_): print(\'child received SIGINT\')\\n'
+        'signal.signal(signal.SIGINT, interrupted)\\n'
+        'print(\'child ready\')\\n'
+        'time.sleep(1.5)"])\n'
+        'def forward(*_):\n'
+        '    time.sleep(0.1)\n'
+        '    child.send_signal(signal.SIGINT)\n'
+        'signal.signal(signal.SIGINT, forward)\n'
+        'child.wait()\n'
+    )
+    launcher.chmod(0o700)
+    env = dict(os.environ, PATH=str(tmp_path) + os.pathsep + os.environ['PATH'])
+    log = launch_manager.LogBus()
+    proc = launch_manager.ManagedProcess('launch', ['ros2', 'launch'], log, env=env)
+    proc.start()
+    assert wait_until(lambda: 'child ready' in log.text())
+    assert proc.stop(int_wait=3.0) == 'sigint'
+    assert wait_until(lambda: proc.returncode == 0)
+    assert log.text().count('child received SIGINT') == 1
+
+
 def test_stop_escalates_to_sigkill_when_signals_are_ignored():
     proc = launch_manager.ManagedProcess(
         'stubborn', ['sh', '-c', 'trap "" INT TERM; sleep 60'], launch_manager.LogBus())

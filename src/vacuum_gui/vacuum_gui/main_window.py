@@ -1348,7 +1348,7 @@ class MainWindow(QMainWindow):
             dialog.setWindowTitle('The stack is running')
             dialog.setText('Close the panel and leave the simulator running?')
             dialog.setInformativeText(
-                'Stop stack: sends SIGINT to the process group and waits (no orphan gz).\n'
+                'Stop stack shuts down the simulator and its child processes.\n'
                 'Leave running: the sim keeps going; use "Kill leftovers" or Stop next time.')
             stop = dialog.addButton('Stop stack and quit', QMessageBox.ButtonRole.AcceptRole)
             leave = dialog.addButton('Leave running', QMessageBox.ButtonRole.DestructiveRole)

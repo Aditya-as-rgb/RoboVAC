@@ -68,7 +68,7 @@ class MissionRunner:
     def __init__(self, plan, navigate, follow, robot_pose, log=None, status=None,
                  max_retries=2, transit_tolerance=0.35, skip_done_fraction=0.9,
                  reclean=None, reclean_passes=2, pass_done=None, clock=None,
-                 spot_tolerance=0.10):
+                 spot_tolerance=0.10, retry_delay=0.0):
         self.plan = plan
         self._navigate = navigate
         self._follow = follow
@@ -83,6 +83,7 @@ class MissionRunner:
         self._pass_done = pass_done or (lambda pass_no: None)
         self._clock = clock or time.monotonic
         self.spot_tolerance = spot_tolerance
+        self.retry_delay = retry_delay
         self._cancel = threading.Event()
 
     def cancel(self):
@@ -134,7 +135,7 @@ class MissionRunner:
         """Bring the robot to the start of a piece; True when it is there (or close enough)."""
         tol = self.transit_tolerance if tolerance is None else tolerance
         for attempt in range(self.max_retries + 1):
-            if self.cancelled:
+            if self._cancel.wait(self.retry_delay if attempt else 0.0):
                 return False
             pose = self._robot_pose()
             if pose is not None and _dist(pose, target) <= tol:
@@ -168,7 +169,7 @@ class MissionRunner:
                 self._log('piece %d: could not reach its start, skipped' % (idx + 1))
             return res
         for attempt in range(self.max_retries + 1):
-            if self.cancelled:
+            if self._cancel.wait(self.retry_delay if attempt else 0.0):
                 res.status = 'cancelled'
                 return res
             res.attempts = attempt + 1

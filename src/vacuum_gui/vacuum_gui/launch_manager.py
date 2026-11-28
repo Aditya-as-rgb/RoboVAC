@@ -16,8 +16,8 @@
 
 ``ros2 launch`` starts a tree of processes; a plain ``Popen.terminate()`` kills only the
 launcher and leaves ``gz sim``, its ruby plugin host and ``rviz2`` behind. Every child
-here gets ``start_new_session=True`` (``setsid``), so stopping one means signalling the
-whole group: SIGINT first (ROS shutdown is clean), then SIGTERM, then SIGKILL.
+here gets ``start_new_session=True`` (``setsid``). ROS launch forwards SIGINT to its
+nodes. Other commands receive SIGINT as a group, with group-wide escalation for either.
 
 No ROS and no Qt in this module, which is why ``test/test_launch_manager.py`` can run a
 real process group and check that a child that ignores SIGINT still dies.
@@ -192,7 +192,7 @@ class ManagedProcess:
             raise
 
     def stop(self, int_wait=8.0, term_wait=4.0):
-        """SIGINT the group, then SIGTERM, then SIGKILL. Returns the signal used."""
+        """Request shutdown, escalating to the entire group if needed."""
         proc = self.proc
         if proc is None or not self.running:
             return 'gone'
@@ -203,7 +203,12 @@ class ManagedProcess:
         for sig, wait, label in ((signal.SIGINT, int_wait, 'sigint'),
                                  (signal.SIGTERM, term_wait, 'sigterm'),
                                  (signal.SIGKILL, 2.0, 'sigkill')):
-            if self.signal(sig):
+            if sig == signal.SIGINT and self.argv[:2] == ['ros2', 'launch']:
+                # The noninteractive launcher forwards SIGINT to its children.
+                # Sending it to the group as well interrupts cleanup in Python nodes.
+                proc.send_signal(sig)
+                self.stop_signal = label
+            elif self.signal(sig):
                 self.stop_signal = label
             try:
                 proc.wait(timeout=wait)

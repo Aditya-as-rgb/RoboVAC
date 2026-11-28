@@ -15,6 +15,7 @@ import json
 
 import rclpy
 from rclpy.duration import Duration
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
 from rclpy.time import Time
@@ -166,11 +167,14 @@ class DirtDetectorNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = DirtDetectorNode()
+    # Let the TF listener update the buffer while the image callback waits for a transform.
+    executor = MultiThreadedExecutor(num_threads=2)
     try:
-        rclpy.spin(node)
+        rclpy.spin(node, executor=executor)
     except KeyboardInterrupt:
         pass
     finally:
+        executor.shutdown()
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
